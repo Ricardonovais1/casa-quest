@@ -310,14 +310,8 @@ CREATE TABLE escalada_categories (
 
 CREATE INDEX idx_escalada_categories_family ON escalada_categories(family_id);
 
--- ============================================================
--- SEED: Default Escalada Categories
--- ============================================================
-INSERT INTO escalada_categories (family_id, name, base_points, bonus_multiplier, max_per_mission) VALUES
-  ('00000000-0000-0000-0000-000000000000', 'Missões', 2, 1.5, 10),
-  ('00000000-0000-0000-0000-000000000000', 'Gentilezas', 1, 2.0, 8),
-  ('00000000-0000-0000-0000-000000000000', 'Autoaperfeiçoamento', 2, 1.2, 12),
-  ('00000000-0000-0000-0000-000000000000', 'Rendimento Escolar', 3, 1.0, 15);
+-- DECISION: Seed categories are created per-family during onboarding (see API route).
+-- The INSERT below is commented out because it requires a valid family_id.
 
 -- ============================================================
 -- HELPER: Auto-update updated_at timestamp

@@ -5,6 +5,8 @@
 
 import Link from 'next/link';
 import { Shield } from 'lucide-react';
+import { SignOutButton } from '@/components/layout/signout-button';
+import { AuthGuardClient } from './auth-guard-client';
 
 const navigation = [
   { name: 'Visão Geral', href: '/dashboard', icon: '🏠' },
@@ -22,6 +24,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   return (
+    <AuthGuardClient>
     <div className="flex min-h-screen">
       {/* Sidebar — desktop */}
       <aside className="hidden w-64 flex-col border-r border-gray-200 bg-white lg:flex">
@@ -44,12 +47,7 @@ export default function DashboardLayout({
         </nav>
 
         <div className="border-t border-gray-200 p-4">
-          <Link
-            href="/api/auth/signout"
-            className="text-sm text-gray-500 hover:text-gray-700"
-          >
-            Sair
-          </Link>
+          <SignOutButton />
         </div>
       </aside>
 
@@ -74,5 +72,6 @@ export default function DashboardLayout({
         </div>
       </main>
     </div>
+    </AuthGuardClient>
   );
 }
