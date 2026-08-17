@@ -21,12 +21,13 @@ export const DEFAULT_TOLERANCE_MINUTES = 30;
 export const DEFAULT_MISSION_DURATION_DAYS = 15;
 export const MISSION_DURATION_OPTIONS = [7, 15, 30] as const;
 
+/** Distribution rotation interval (months) */
+export const ROTATION_INTERVAL_OPTIONS = [1, 2, 3] as const;
+
 /** Confirmation */
 export const CONFIRMATION_MODES = [
   'none',
   'one_peer',
-  'quorum',
-  'adult_only',
 ] as const;
 
 export const QUORUM_TYPES = ['dynamic', 'fixed'] as const;
@@ -35,6 +36,7 @@ export const QUORUM_TYPES = ['dynamic', 'fixed'] as const;
 export const ACTION_CATEGORIES = [
   'habitos',
   'cooperacao',
+  'tropecos',
   'missoes',
   'gentilezas',
   'autoaperfeicoamento',

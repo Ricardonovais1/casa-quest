@@ -12,6 +12,7 @@ const tables = [
   'families', 'guardians', 'action_templates', 'missions',
   'mission_guardians', 'mission_actions', 'action_confirmations',
   'energy_events', 'cooperation_events', 'escalada_categories',
+  'action_assignments',
 ];
 
 // Disable RLS on all tables and create permissive policies

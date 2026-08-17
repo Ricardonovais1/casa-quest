@@ -17,7 +17,7 @@ export default function SettingsPage() {
 
   // Local state for editable fields
   const [tolerance, setTolerance] = useState(30);
-  const [quorumType, setQuorumType] = useState('dynamic');
+  const [confirmation, setConfirmation] = useState<0 | 1>(1);
   const [missionDays, setMissionDays] = useState(15);
   const [recoveryEnabled, setRecoveryEnabled] = useState(true);
   const [recoveryValue, setRecoveryValue] = useState(2);
@@ -28,7 +28,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (family) {
       setTolerance(family.tolerance_minutes);
-      setQuorumType(family.quorum_type);
+      setConfirmation(family.quorum_fixed === 0 ? 0 : 1);
       setMissionDays(family.mission_duration_days);
       setRecoveryEnabled(family.recovery_enabled);
       setRecoveryValue(family.recovery_value);
@@ -47,7 +47,8 @@ export default function SettingsPage() {
       .from('families')
       .update({
         tolerance_minutes: tolerance,
-        quorum_type: quorumType,
+        quorum_type: 'fixed',
+        quorum_fixed: confirmation,
         mission_duration_days: missionDays,
         recovery_enabled: recoveryEnabled,
         recovery_value: recoveryValue,
@@ -125,19 +126,18 @@ export default function SettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle>⚖️ Confirmação de ações</CardTitle>
-          <CardDescription>Quantas pessoas precisam confirmar uma ação?</CardDescription>
+          <CardDescription>As ações precisam que alguém confirme que foram feitas?</CardDescription>
         </CardHeader>
         <div className="flex gap-2">
           {[
-            { value: 'dynamic', label: 'Dinâmico (1-2)' },
-            { value: 'fixed_1', label: '1 pessoa' },
-            { value: 'fixed_2', label: '2 pessoas' },
+            { value: 0 as const, label: 'Nenhuma' },
+            { value: 1 as const, label: '1 pessoa' },
           ].map((opt) => (
             <button
               key={opt.value}
-              onClick={() => setQuorumType(opt.value === 'dynamic' ? 'dynamic' : 'fixed')}
+              onClick={() => setConfirmation(opt.value)}
               className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                (opt.value === 'dynamic' ? quorumType === 'dynamic' : quorumType === 'fixed')
+                confirmation === opt.value
                   ? 'bg-indigo-600 text-white'
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }`}

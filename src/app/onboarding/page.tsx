@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getSupabaseBrowserClient } from '@/infrastructure/supabase/client';
+import { seedDefaultActions } from '@/lib/default-actions';
 
 type Step =
   | 'welcome'
@@ -31,7 +32,7 @@ export default function OnboardingPage() {
   const [participantCount, setParticipantCount] = useState(2);
   const [morName, setMorName] = useState('');
   const [guardianNames, setGuardianNames] = useState<string[]>(['']);
-  const [quorumType, setQuorumType] = useState('dynamic');
+  const [confirmation, setConfirmation] = useState<'none' | 'one'>('one');
   const [tolerance, setTolerance] = useState(30);
   const [missionDays, setMissionDays] = useState(15);
   const [recoveryEnabled, setRecoveryEnabled] = useState(true);
@@ -67,10 +68,10 @@ export default function OnboardingPage() {
       .insert({
         name: familyName,
         created_by: user.id,
-        quorum_type: quorumType === 'fixed_1' || quorumType === 'fixed_2' ? 'fixed' : 'dynamic',
+        quorum_type: 'fixed',
         quorum_small_family: 1,
-        quorum_large_family: quorumType === 'fixed_2' ? 2 : 2,
-        quorum_fixed: quorumType === 'fixed_1' ? 1 : quorumType === 'fixed_2' ? 2 : 1,
+        quorum_large_family: 1,
+        quorum_fixed: confirmation === 'one' ? 1 : 0,
         tolerance_minutes: tolerance,
         recovery_enabled: recoveryEnabled,
         auxilio_enabled: auxilioEnabled,
@@ -122,6 +123,9 @@ export default function OnboardingPage() {
       { family_id: family.id, name: 'Rendimento Escolar', base_points: 3, bonus_multiplier: 1.0, max_per_mission: 15 },
     ];
     await supabase.from('escalada_categories').insert(defaultCategories);
+
+    // 5. Seed the default action catalog (Hábitos, Colaboração, Tropeços, Missões)
+    await seedDefaultActions(supabase, family.id);
 
     router.push('/dashboard');
     router.refresh();
@@ -248,32 +252,21 @@ export default function OnboardingPage() {
               ⚖️ Confirmação de ações
             </label>
             <p className="mb-4 text-sm text-gray-500">
-              Quantas pessoas precisam confirmar que uma ação foi feita?
+              As ações precisam que alguém confirme que foram feitas?
             </p>
             <div className="space-y-2">
-              {participantCount <= 2 ? (
-                <OptionButton
-                  selected={quorumType === 'fixed_1'}
-                  onClick={() => setQuorumType('fixed_1')}
-                  title="1 pessoa confirma"
-                  subtitle="Recomendado para famílias pequenas"
-                />
-              ) : (
-                <>
-                  <OptionButton
-                    selected={quorumType === 'dynamic'}
-                    onClick={() => setQuorumType('dynamic')}
-                    title="2 pessoas confirmam"
-                    subtitle="Recomendado — equilíbrio entre confiança e verificação"
-                  />
-                  <OptionButton
-                    selected={quorumType === 'fixed_1'}
-                    onClick={() => setQuorumType('fixed_1')}
-                    title="1 pessoa confirma"
-                    subtitle="Mais ágil, menos verificação"
-                  />
-                </>
-              )}
+              <OptionButton
+                selected={confirmation === 'none'}
+                onClick={() => setConfirmation('none')}
+                title="Sem confirmação"
+                subtitle="Cada um marca o que fez, sem precisar de outra pessoa"
+              />
+              <OptionButton
+                selected={confirmation === 'one'}
+                onClick={() => setConfirmation('one')}
+                title="1 pessoa confirma"
+                subtitle="Recomendado — uma pessoa valida a ação"
+              />
             </div>
           </div>
         );
@@ -392,7 +385,7 @@ export default function OnboardingPage() {
               <SummaryRow label="Participantes" value={`${participantCount} pessoas`} />
               <SummaryRow label="Guardião-Mor" value={morName} />
               <SummaryRow label="Guardiões" value={guardianNames.filter(Boolean).join(', ') || 'Nenhum'} />
-              <SummaryRow label="Confirmação" value={quorumType === 'dynamic' ? '2 pessoas' : '1 pessoa'} />
+              <SummaryRow label="Confirmação" value={confirmation === 'one' ? '1 pessoa confirma' : 'Sem confirmação'} />
               <SummaryRow label="Tolerância" value={`${tolerance} min`} />
               <SummaryRow label="Missão" value={`${missionDays} dias`} />
               <SummaryRow label="Recuperação" value={recoveryEnabled ? 'Sim' : 'Não'} />

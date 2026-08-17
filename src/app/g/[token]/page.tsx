@@ -4,6 +4,8 @@
 
 import { createServiceClient } from '@/infrastructure/supabase/server';
 import { notFound } from 'next/navigation';
+import { ensureCurrentDistribution } from '@/lib/distribution';
+import { formatDate } from '@/lib/utils';
 
 interface GuardianPageProps {
   params: Promise<{ token: string }>;
@@ -48,6 +50,12 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
     );
   }
 
+  // Ensure an up-to-date distribution exists (auto-regenerates if expired),
+  // then show this guardian's assigned collaborative actions.
+  const { assignments } = await ensureCurrentDistribution(supabase, guardian.family_id);
+  const myAssignments = assignments.filter((a) => a.guardian_id === guardian.id);
+  const periodUntil = assignments[0]?.valid_until ?? null;
+
   // Get today's actions for this guardian
   const today = new Date().toISOString().split('T')[0]!;
   const { data: todaysActions } = await supabase
@@ -90,6 +98,27 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
           </div>
         </div>
       </div>
+
+      {/* Monthly responsibilities (distribution) */}
+      {myAssignments.length > 0 && (
+        <div className="mx-auto mt-4 max-w-md px-4">
+          <h2 className="text-sm font-semibold text-gray-700">Suas responsabilidades do mês</h2>
+          {periodUntil && (
+            <p className="text-xs text-gray-400">Válido até {formatDate(periodUntil)}</p>
+          )}
+          <div className="mt-2 space-y-2">
+            {myAssignments.map((a) => (
+              <div
+                key={a.id}
+                className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm"
+              >
+                <span className="text-sm font-medium text-gray-900">{a.action_name}</span>
+                <span className="text-xs text-gray-400">{a.frequency || ''}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Today's actions */}
       <div className="mx-auto mt-4 max-w-md space-y-3 px-4">

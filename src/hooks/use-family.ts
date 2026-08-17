@@ -23,6 +23,7 @@ export interface FamilyData {
   auxilio_enabled: boolean;
   escalada_enabled: boolean;
   mission_duration_days: number;
+  rotation_interval_months: number;
 }
 
 export interface GuardianData {

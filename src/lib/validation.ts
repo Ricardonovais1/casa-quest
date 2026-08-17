@@ -21,13 +21,14 @@ export const updateFamilySchema = z.object({
   quorumSmallFamily: z.number().int().min(1).max(10).optional(),
   quorumLargeFamily: z.number().int().min(1).max(10).optional(),
   quorumThreshold: z.number().int().min(2).max(20).optional(),
-  quorumFixed: z.number().int().min(1).max(10).optional(),
+  quorumFixed: z.number().int().min(0).max(10).optional(),
   toleranceMinutes: z.number().int().min(0).max(480).optional(),
   recoveryEnabled: z.boolean().optional(),
   recoveryValue: z.number().int().min(1).max(10).optional(),
   auxilioEnabled: z.boolean().optional(),
   escaladaEnabled: z.boolean().optional(),
   missionDurationDays: z.number().int().min(7).max(30).optional(),
+  rotationIntervalMonths: z.number().int().min(1).max(3).optional(),
 });
 
 export type CreateFamilyInput = z.infer<typeof createFamilySchema>;
@@ -63,6 +64,7 @@ export const createActionTemplateSchema = z.object({
   description: z.string().max(1000).optional(),
   category: z.enum(ACTION_CATEGORIES),
   actionType: z.enum(ACTION_TYPES).default('basic'),
+  points: z.number().int().optional(),
   defaultDueTime: z.string().regex(/^\d{2}:\d{2}$/, 'Formato HH:MM').default('20:00'),
   defaultDuration: z.number().int().positive().optional(),
   frequency: z.string().default('daily'),

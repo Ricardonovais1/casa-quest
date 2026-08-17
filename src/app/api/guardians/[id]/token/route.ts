@@ -6,8 +6,34 @@
 import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/infrastructure/supabase/server';
 
+/**
+ * Derive the app's public base URL from the incoming request so generated
+ * guardian links never hard-code `localhost`. Priority:
+ *   1. A real (non-localhost) NEXT_PUBLIC_APP_URL, if configured
+ *   2. The forwarded host/proto (works on Vercel & behind proxies)
+ *   3. The request host
+ *   4. localhost fallback (local dev)
+ */
+function getBaseUrl(request: Request): string {
+  const env = process.env.NEXT_PUBLIC_APP_URL;
+  if (env && !/^https?:\/\/localhost\b/i.test(env)) {
+    return env.replace(/\/+$/, '');
+  }
+
+  const forwardedProto = request.headers.get('x-forwarded-proto');
+  const forwardedHost = request.headers.get('x-forwarded-host');
+  const host = request.headers.get('host');
+
+  const resolvedHost = forwardedHost || host;
+  if (resolvedHost) {
+    return `${forwardedProto || 'http'}://${resolvedHost}`;
+  }
+
+  return env || 'http://localhost:3000';
+}
+
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -74,7 +100,7 @@ export async function POST(
       })
       .eq('id', id);
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const appUrl = getBaseUrl(request);
     const accessLink = `${appUrl}/g/${token}`;
 
     return NextResponse.json({

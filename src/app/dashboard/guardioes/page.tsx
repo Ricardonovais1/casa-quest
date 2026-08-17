@@ -261,6 +261,14 @@ export default function GuardiansPage() {
                         className="flex-1 rounded border border-emerald-200 bg-white px-2 py-1 text-xs text-emerald-700"
                         onFocus={(e) => e.target.select()}
                       />
+                      <a
+                        href={generatedToken.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-700"
+                      >
+                        Abrir ↗
+                      </a>
                       <button
                         onClick={() => navigator.clipboard.writeText(generatedToken.link)}
                         className="rounded bg-emerald-500 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-600"

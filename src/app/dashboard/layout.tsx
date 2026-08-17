@@ -13,6 +13,7 @@ const navigation = [
   { name: 'Família', href: '/dashboard/familia', icon: '👨‍👩‍👧‍👦' },
   { name: 'Guardiões', href: '/dashboard/guardioes', icon: '🦸' },
   { name: 'Ações', href: '/dashboard/acoes', icon: '✅' },
+  { name: 'Distribuição', href: '/dashboard/distribuicao', icon: '🎲' },
   { name: 'Missões', href: '/dashboard/missoes', icon: '🎯' },
   { name: 'Energia', href: '/dashboard/energia', icon: '⚡' },
   { name: 'Configurações', href: '/dashboard/config', icon: '⚙️' },
