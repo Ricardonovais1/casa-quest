@@ -4,68 +4,14 @@
 // Casa Quest — Dashboard: Settings (editable)
 // ============================================================
 
-import { useState, useEffect } from 'react';
-import { useFamily } from '@/hooks/use-family';
+import { useState } from 'react';
+import { useFamily, type FamilyData } from '@/hooks/use-family';
 import { getSupabaseBrowserClient } from '@/infrastructure/supabase/client';
 import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
 export default function SettingsPage() {
   const { family, loading, error, reload } = useFamily();
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-
-  // Local state for editable fields
-  const [tolerance, setTolerance] = useState(30);
-  const [confirmation, setConfirmation] = useState<0 | 1>(1);
-  const [missionDays, setMissionDays] = useState(15);
-  const [recoveryEnabled, setRecoveryEnabled] = useState(true);
-  const [recoveryValue, setRecoveryValue] = useState(2);
-  const [auxilioEnabled, setAuxilioEnabled] = useState(true);
-  const [escaladaEnabled, setEscaladaEnabled] = useState(false);
-
-  // Init from loaded family
-  useEffect(() => {
-    if (family) {
-      setTolerance(family.tolerance_minutes);
-      setConfirmation(family.quorum_fixed === 0 ? 0 : 1);
-      setMissionDays(family.mission_duration_days);
-      setRecoveryEnabled(family.recovery_enabled);
-      setRecoveryValue(family.recovery_value);
-      setAuxilioEnabled(family.auxilio_enabled);
-      setEscaladaEnabled(family.escalada_enabled);
-    }
-  }, [family]);
-
-  async function handleSave() {
-    if (!family) return;
-    setSaving(true);
-    setSaved(false);
-
-    const supabase = getSupabaseBrowserClient();
-    const { error: updateError } = await supabase
-      .from('families')
-      .update({
-        tolerance_minutes: tolerance,
-        quorum_type: 'fixed',
-        quorum_fixed: confirmation,
-        mission_duration_days: missionDays,
-        recovery_enabled: recoveryEnabled,
-        recovery_value: recoveryValue,
-        auxilio_enabled: auxilioEnabled,
-        escalada_enabled: escaladaEnabled,
-      })
-      .eq('id', family.id);
-
-    if (updateError) {
-      alert('Erro ao salvar: ' + updateError.message);
-    } else {
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-      reload();
-    }
-    setSaving(false);
-  }
 
   if (loading) {
     return (
@@ -85,6 +31,62 @@ export default function SettingsPage() {
     );
   }
 
+  // Keyed by family id so the form re-initialises if the family ever changes,
+  // which lets the fields below seed straight from props — no mirroring effect.
+  return <SettingsForm key={family.id} family={family} reload={reload} />;
+}
+
+function SettingsForm({
+  family,
+  reload,
+}: {
+  family: FamilyData;
+  reload: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const [tolerance, setTolerance] = useState(family.tolerance_minutes);
+  const [confirmation, setConfirmation] = useState<0 | 1>(
+    family.quorum_fixed === 0 ? 0 : 1
+  );
+  const [missionDays, setMissionDays] = useState(family.mission_duration_days);
+  const [recoveryEnabled, setRecoveryEnabled] = useState(family.recovery_enabled);
+  const [recoveryValue, setRecoveryValue] = useState(family.recovery_value);
+  const [auxilioEnabled, setAuxilioEnabled] = useState(family.auxilio_enabled);
+  const [escaladaEnabled, setEscaladaEnabled] = useState(family.escalada_enabled);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  async function handleSave() {
+    setSaving(true);
+    setSaved(false);
+    setSaveError(null);
+
+    const supabase = getSupabaseBrowserClient();
+    const { error: updateError } = await supabase
+      .from('families')
+      .update({
+        tolerance_minutes: tolerance,
+        quorum_type: 'fixed',
+        quorum_fixed: confirmation,
+        mission_duration_days: missionDays,
+        recovery_enabled: recoveryEnabled,
+        recovery_value: recoveryValue,
+        auxilio_enabled: auxilioEnabled,
+        escalada_enabled: escaladaEnabled,
+      })
+      .eq('id', family.id);
+
+    if (updateError) {
+      setSaveError(updateError.message);
+    } else {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+      reload();
+    }
+    setSaving(false);
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -96,6 +98,12 @@ export default function SettingsPage() {
           {saved ? '✓ Salvo!' : 'Salvar'}
         </Button>
       </div>
+
+      {saveError && (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
+          Erro ao salvar: {saveError}
+        </p>
+      )}
 
       {/* Tolerance */}
       <Card>

@@ -43,14 +43,6 @@ export async function GET(
 
     const initialEnergy = mg?.initial_energy || 100;
 
-    // Get all energy events for this guardian/mission
-    const { data: events } = await supabase
-      .from('energy_events')
-      .select('*')
-      .eq('guardian_id', guardianId)
-      .eq('mission_id', missionId)
-      .order('created_at', { ascending: true });
-
     // Get missed actions for sequence analysis
     const { data: missedActions } = await supabase
       .from('mission_actions')
@@ -112,19 +104,19 @@ export async function GET(
       .single();
 
     let recoveryValue = 2;
-    let recurrenceWeight = 0.5;
+    // DECISION: recurrence_weight is not a column in `families`; it stays a
+    // constant here until a migration introduces it.
+    const recurrenceWeight = 0.5;
 
     if (family) {
       const { data: familyConfig } = await supabase
         .from('families')
-        .select('recovery_value, recurrence_weight')
+        .select('recovery_value')
         .eq('id', family.family_id)
         .single();
 
       if (familyConfig) {
         recoveryValue = familyConfig.recovery_value || 2;
-        // DECISION: recurrence_weight is not stored as a column in families table
-        // Default to 0.5. Can be added as a migration later.
       }
     }
 

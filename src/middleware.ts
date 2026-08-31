@@ -10,7 +10,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 export async function middleware(request: NextRequest) {
   // Create a response that we'll modify
-  let response = NextResponse.next({ request });
+  const response = NextResponse.next({ request });
 
   // Only set up Supabase client for session refresh
   // NOT for auth gating — that's done at the page level

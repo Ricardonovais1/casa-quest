@@ -47,8 +47,14 @@ export default function MissionsPage() {
     setLoading(false);
   }
 
+  // Captured once per mount — "dias restantes" only needs day-level precision,
+  // and reading the clock during render is non-deterministic.
+  const [now] = useState(() => Date.now());
+
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- data load on mount; state is only set after the await resolves
     if (family) loadMissions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [family]);
 
   function resetForm() {
@@ -270,7 +276,7 @@ export default function MissionsPage() {
         ) : (
           missions.map((m) => {
             const daysLeft = Math.max(0, Math.ceil(
-              (new Date(m.end_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+              (new Date(m.end_at).getTime() - now) / (1000 * 60 * 60 * 24)
             ));
             const totalDays = Math.ceil(
               (new Date(m.end_at).getTime() - new Date(m.start_at).getTime()) / (1000 * 60 * 60 * 24)

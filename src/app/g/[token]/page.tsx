@@ -5,7 +5,13 @@
 import { createServiceClient } from '@/infrastructure/supabase/server';
 import { notFound } from 'next/navigation';
 import { ensureCurrentDistribution } from '@/lib/distribution';
+import { resolveGuardianToken } from '@/lib/guardian-token';
+import { localDayRangeUtc } from '@/lib/day-range';
 import { formatDate } from '@/lib/utils';
+import {
+  GuardianActionCard,
+  type GuardianAction,
+} from '@/components/guardians/guardian-action-card';
 
 interface GuardianPageProps {
   params: Promise<{ token: string }>;
@@ -13,30 +19,15 @@ interface GuardianPageProps {
 
 export default async function GuardianPage({ params }: GuardianPageProps) {
   const { token } = await params;
-
-  // Hash the token to look up guardian
-  const encoder = new TextEncoder();
-  const data = encoder.encode(token);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const tokenHash = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-
   const supabase = await createServiceClient();
 
-  // Find guardian by token hash
-  const { data: guardian, error } = await supabase
-    .from('guardians')
-    .select('id, name, family_id, token_expires_at')
-    .eq('access_token_hash', tokenHash)
-    .eq('is_active', true)
-    .single();
+  const auth = await resolveGuardianToken(supabase, token);
 
-  if (error || !guardian) {
+  if (!auth.ok && auth.reason === 'not_found') {
     notFound();
   }
 
-  // Check token expiry
-  if (guardian.token_expires_at && new Date(guardian.token_expires_at) < new Date()) {
+  if (!auth.ok) {
     return (
       <div className="flex min-h-screen items-center justify-center px-4">
         <div className="text-center">
@@ -50,21 +41,51 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
     );
   }
 
+  const { guardian } = auth;
+
   // Ensure an up-to-date distribution exists (auto-regenerates if expired),
   // then show this guardian's assigned collaborative actions.
   const { assignments } = await ensureCurrentDistribution(supabase, guardian.family_id);
   const myAssignments = assignments.filter((a) => a.guardian_id === guardian.id);
   const periodUntil = assignments[0]?.valid_until ?? null;
 
-  // Get today's actions for this guardian
-  const today = new Date().toISOString().split('T')[0]!;
+  // "Hoje" segue o fuso da família, não o UTC: às 21h em São Paulo o UTC já
+  // virou o dia e a lista esvaziaria justo no horário das tarefas da noite.
+  const { data: familyRow } = await supabase
+    .from('families')
+    .select('timezone')
+    .eq('id', guardian.family_id)
+    .single();
+
+  const { startUtc, endUtc } = localDayRangeUtc(
+    familyRow?.timezone || 'America/Sao_Paulo'
+  );
+
   const { data: todaysActions } = await supabase
     .from('mission_actions')
     .select('id, status, due_at, confirmation_status, action_templates(name, category)')
     .eq('guardian_id', guardian.id)
-    .gte('due_at', `${today}T00:00:00`)
-    .lte('due_at', `${today}T23:59:59`)
+    .gte('due_at', startUtc)
+    .lt('due_at', endUtc)
     .order('due_at', { ascending: true });
+
+  // Flatten the joined template into the shape the card expects. PostgREST
+  // returns the relation as an object or a single-element array depending on
+  // how it infers the relationship, so handle both.
+  const actions: GuardianAction[] = (todaysActions ?? []).map((a) => {
+    const rel = a.action_templates as
+      | { name: string; category: string }
+      | { name: string; category: string }[]
+      | null;
+    const template = Array.isArray(rel) ? rel[0] : rel;
+    return {
+      id: a.id,
+      status: String(a.status),
+      due_at: a.due_at,
+      name: template?.name ?? 'Ação',
+      category: template?.category ?? 'habitos',
+    };
+  });
 
   return (
     <main className="min-h-screen bg-gray-50 pb-20">
@@ -123,12 +144,12 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
       {/* Today's actions */}
       <div className="mx-auto mt-4 max-w-md space-y-3 px-4">
         <h2 className="text-sm font-semibold text-gray-700">
-          Ações de Hoje ({todaysActions?.length || 0})
+          Ações de Hoje ({actions.length})
         </h2>
 
-        {todaysActions && todaysActions.length > 0 ? (
-          todaysActions.map((action) => (
-            <ActionCard key={action.id} action={action} guardianId={guardian.id} />
+        {actions.length > 0 ? (
+          actions.map((action) => (
+            <GuardianActionCard key={action.id} action={action} token={token} />
           ))
         ) : (
           <div className="rounded-xl bg-white p-8 text-center shadow-sm">
@@ -171,59 +192,6 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
       {/* Bottom spacer for mobile nav */}
       <div className="h-20" />
     </main>
-  );
-}
-
-function ActionCard({
-  action,
-  guardianId,
-}: {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  action: any;
-  guardianId: string;
-}) {
-  const dueTime = new Date(action.due_at);
-  const dueTimeStr = dueTime.toLocaleTimeString('pt-BR', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-
-  const name = action.action_templates?.name || 'Ação';
-  const category = action.action_templates?.category || 'habitos';
-
-  const statusMap: Record<string, { label: string; icon: string; color: string }> = {
-    pending: { label: 'Pendente', icon: '○', color: 'text-gray-400' },
-    marked_done: { label: 'Aguardando confirmação', icon: '⏳', color: 'text-amber-500' },
-    confirmed: { label: 'Concluída', icon: '✓', color: 'text-emerald-600' },
-    missed: { label: 'Não fez', icon: '✕', color: 'text-red-500' },
-    cancelled: { label: 'Cancelada', icon: '—', color: 'text-gray-400' },
-  };
-  const statusDisplay = statusMap[String(action.status)] || {
-    label: String(action.status), icon: '?', color: 'text-gray-400',
-  };
-
-  const canMark = action.status === 'pending';
-
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between">
-        <div>
-          <h3 className="text-sm font-semibold text-gray-900">{name}</h3>
-          <p className="mt-0.5 text-xs text-gray-500">
-            ⏰ Até {dueTimeStr} • {category}
-          </p>
-        </div>
-        <span className={`text-sm ${statusDisplay.color}`}>
-          {statusDisplay.icon} {statusDisplay.label}
-        </span>
-      </div>
-
-      {canMark && (
-        <button className="mt-3 w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors">
-          Fiz! ✓
-        </button>
-      )}
-    </div>
   );
 }
 

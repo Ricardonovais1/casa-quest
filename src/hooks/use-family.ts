@@ -34,6 +34,8 @@ export interface GuardianData {
   avatar_url: string | null;
   is_mor: boolean;
   is_active: boolean;
+  /** Plain token, readable only by the family (RLS). Used to rebuild the link. */
+  access_token: string | null;
   access_token_hash: string | null;
   token_expires_at: string | null;
   created_at: string;
@@ -46,10 +48,11 @@ export function useFamily() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
+  /**
+   * Fetches everything and only touches state after an await, so mounting
+   * does not trigger a synchronous cascading re-render.
+   */
+  const fetchAll = useCallback(async () => {
     try {
       const supabase = getSupabaseBrowserClient();
       const { data: { user } } = await supabase.auth.getUser();
@@ -102,7 +105,7 @@ export function useFamily() {
       if (!gError && allGuardians) {
         setGuardians(allGuardians);
       }
-    } catch (e) {
+    } catch {
       setError('Erro ao carregar dados');
     } finally {
       setLoading(false);
@@ -110,8 +113,16 @@ export function useFamily() {
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- data load on mount; fetchAll only sets state after its awaits resolve
+    fetchAll();
+  }, [fetchAll]);
 
-  return { family, guardians, morGuardian, loading, error, reload: load };
+  /** Manual refresh: shows the loading state again, then refetches. */
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    await fetchAll();
+  }, [fetchAll]);
+
+  return { family, guardians, morGuardian, loading, error, reload };
 }

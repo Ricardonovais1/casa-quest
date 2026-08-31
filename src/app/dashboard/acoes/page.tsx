@@ -83,6 +83,7 @@ export default function ActionsPage() {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- data load on mount; state is only set after the await resolves
     if (family) loadTemplates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [family]);

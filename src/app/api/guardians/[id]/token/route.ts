@@ -1,10 +1,13 @@
 // ============================================================
-// Casa Quest — API: Generate/Regenerate Guardian Token
-// POST /api/guardians/[id]/token
+// Casa Quest — API: Guardian Access Link
+// GET  /api/guardians/[id]/token  → devolve o link atual (se houver)
+// POST /api/guardians/[id]/token  → gera/regenera o link
 // ============================================================
 
 import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/infrastructure/supabase/server';
+
+const TOKEN_TTL_DAYS = 90;
 
 /**
  * Derive the app's public base URL from the incoming request so generated
@@ -32,88 +35,135 @@ function getBaseUrl(request: Request): string {
   return env || 'http://localhost:3000';
 }
 
+async function sha256Hex(value: string): Promise<string> {
+  const hashBuffer = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(value)
+  );
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function fail(code: string, message: string, status: number) {
+  return NextResponse.json({ error: { code, message } }, { status });
+}
+
+/**
+ * Ensure the caller is the Guardião-Mor of the target guardian's family.
+ * Returns the target guardian row, or a ready-to-return error response.
+ */
+async function authorizeMor(id: string) {
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: fail('UNAUTHORIZED', 'Não autenticado', 401) };
+  }
+
+  const { data: targetGuardian } = await supabase
+    .from('guardians')
+    .select('id, family_id, name')
+    .eq('id', id)
+    .single();
+
+  if (!targetGuardian) {
+    return { error: fail('NOT_FOUND', 'Guardião não encontrado', 404) };
+  }
+
+  const { data: morGuardian } = await supabase
+    .from('guardians')
+    .select('id')
+    .eq('user_id', user.id)
+    .eq('family_id', targetGuardian.family_id)
+    .eq('is_mor', true)
+    .single();
+
+  if (!morGuardian) {
+    return {
+      error: fail(
+        'FORBIDDEN',
+        'Apenas o Guardião-Mor pode gerenciar links de acesso',
+        403
+      ),
+    };
+  }
+
+  return { supabase, guardian: targetGuardian };
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const supabase = await createServerSupabaseClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      return NextResponse.json(
-        { error: { code: 'UNAUTHORIZED', message: 'Não autenticado' } },
-        { status: 403 }
-      );
-    }
+    const auth = await authorizeMor(id);
+    if (auth.error) return auth.error;
 
-    // Verify user is Mor of the guardian's family
-    const { data: targetGuardian } = await supabase
-      .from('guardians')
-      .select('id, family_id, name')
-      .eq('id', id)
-      .single();
+    const { supabase } = auth;
 
-    if (!targetGuardian) {
-      return NextResponse.json(
-        { error: { code: 'NOT_FOUND', message: 'Guardião não encontrado' } },
-        { status: 404 }
-      );
-    }
-
-    const { data: morGuardian } = await supabase
-      .from('guardians')
-      .select('id')
-      .eq('user_id', user.id)
-      .eq('family_id', targetGuardian.family_id)
-      .eq('is_mor', true)
-      .single();
-
-    if (!morGuardian) {
-      return NextResponse.json(
-        { error: { code: 'UNAUTHORIZED', message: 'Apenas o Guardião-Mor pode gerar tokens' } },
-        { status: 403 }
-      );
-    }
-
-    // Generate new token
     const token = crypto.randomUUID();
+    const tokenHash = await sha256Hex(token);
 
-    // Hash it
-    // DECISION: Use Web Crypto API for SHA-256 hashing
-    const encoder = new TextEncoder();
-    const data = encoder.encode(token);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const tokenHash = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-
-    // Set expiry: 90 days from now
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 90);
+    expiresAt.setDate(expiresAt.getDate() + TOKEN_TTL_DAYS);
 
-    // Store hash
-    await supabase
+    // Store the hash (used for the indexed /g/[token] lookup) plus the plain
+    // token, so the Mor can reopen and reshare the link at any time.
+    const { error: updateError } = await supabase
       .from('guardians')
       .update({
+        access_token: token,
         access_token_hash: tokenHash,
         token_expires_at: expiresAt.toISOString(),
       })
       .eq('id', id);
 
-    const appUrl = getBaseUrl(request);
-    const accessLink = `${appUrl}/g/${token}`;
+    if (updateError) {
+      return fail('DB_ERROR', `Não foi possível salvar o link: ${updateError.message}`, 500);
+    }
 
     return NextResponse.json({
       data: {
-        token, // Only returned once! Store it securely.
-        accessLink,
+        accessLink: `${getBaseUrl(request)}/g/${token}`,
         expiresAt: expiresAt.toISOString(),
+        expired: false,
       },
     });
   } catch {
-    return NextResponse.json(
-      { error: { code: 'INTERNAL', message: 'Erro interno' } },
-      { status: 500 }
-    );
+    return fail('INTERNAL', 'Erro interno', 500);
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const auth = await authorizeMor(id);
+    if (auth.error) return auth.error;
+
+    const { supabase } = auth;
+
+    const { error: updateError } = await supabase
+      .from('guardians')
+      .update({
+        access_token: null,
+        access_token_hash: null,
+        token_expires_at: null,
+      })
+      .eq('id', id);
+
+    if (updateError) {
+      return fail('DB_ERROR', `Não foi possível revogar o link: ${updateError.message}`, 500);
+    }
+
+    return NextResponse.json({ data: { accessLink: null, revoked: true } });
+  } catch {
+    return fail('INTERNAL', 'Erro interno', 500);
   }
 }

@@ -97,6 +97,28 @@ export function formatCurrency(value: number): string {
   }).format(value);
 }
 
+/**
+ * Base URL of the app as seen from the browser. Prefers an explicitly
+ * configured public URL, falling back to the origin currently being used —
+ * so guardian links are always shareable and never point at `localhost`
+ * when the Mor is on a deployed domain.
+ */
+export function getAppBaseUrl(): string {
+  const env = process.env.NEXT_PUBLIC_APP_URL;
+  if (env && !/^https?:\/\/localhost\b/i.test(env)) {
+    return env.replace(/\/+$/, '');
+  }
+  if (typeof window !== 'undefined') {
+    return window.location.origin;
+  }
+  return env || 'http://localhost:3000';
+}
+
+/** Build the shareable access link for a guardian's plain token. */
+export function buildGuardianLink(token: string): string {
+  return `${getAppBaseUrl()}/g/${token}`;
+}
+
 /** Generate a random token for guardian access */
 export function generateToken(): string {
   // crypto.randomUUID is available in both browser and Node.js

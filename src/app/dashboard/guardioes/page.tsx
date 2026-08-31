@@ -4,11 +4,12 @@
 // Casa Quest — Dashboard: Guardians CRUD
 // ============================================================
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useFamily, type GuardianData } from '@/hooks/use-family';
 import { getSupabaseBrowserClient } from '@/infrastructure/supabase/client';
-import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { GuardianAccessLink } from '@/components/guardians/guardian-access-link';
 
 export default function GuardiansPage() {
   const { family, guardians, loading, error, reload } = useFamily();
@@ -17,11 +18,6 @@ export default function GuardiansPage() {
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
   const [saving, setSaving] = useState(false);
-  const [generatedToken, setGeneratedToken] = useState<{
-    guardianId: string;
-    link: string;
-    guardianName: string;
-  } | null>(null);
 
   function resetForm() {
     setName('');
@@ -71,39 +67,6 @@ export default function GuardiansPage() {
     await supabase
       .from('guardians')
       .update({ is_active: !g.is_active })
-      .eq('id', g.id);
-    reload();
-  }
-
-  async function handleGenerateToken(g: GuardianData) {
-    if (g.is_mor) return;
-    const supabase = getSupabaseBrowserClient();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    const res = await fetch(`/api/guardians/${g.id}/token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session?.access_token}`,
-      },
-    });
-
-    if (res.ok) {
-      const { data } = await res.json();
-      setGeneratedToken({
-        guardianId: g.id,
-        link: data.accessLink,
-        guardianName: g.name,
-      });
-      reload();
-    }
-  }
-
-  async function handleRevokeToken(g: GuardianData) {
-    const supabase = getSupabaseBrowserClient();
-    await supabase
-      .from('guardians')
-      .update({ access_token_hash: null, token_expires_at: null })
       .eq('id', g.id);
     reload();
   }
@@ -209,6 +172,7 @@ export default function GuardiansPage() {
                       {g.age ? `${g.age} anos` : 'Sem idade'}
                       {g.access_token_hash && ' • Link ativo'}
                     </p>
+
                   </div>
                 </div>
                 <div className="flex gap-1">
@@ -228,60 +192,7 @@ export default function GuardiansPage() {
                 </div>
               </div>
 
-              {/* Token section */}
-              <div className="mt-3 border-t border-gray-100 pt-3">
-                {g.access_token_hash ? (
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-emerald-600">🔗 Link de acesso ativo</span>
-                    <button
-                      onClick={() => handleRevokeToken(g)}
-                      className="text-xs text-red-500 hover:text-red-700"
-                    >
-                      Revogar
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => handleGenerateToken(g)}
-                    className="text-xs font-medium text-indigo-600 hover:text-indigo-500"
-                  >
-                    + Gerar link de acesso
-                  </button>
-                )}
-
-                {generatedToken && generatedToken.guardianId === g.id && (
-                  <div className="mt-2 rounded-lg bg-emerald-50 p-3">
-                    <p className="text-xs font-semibold text-emerald-800">
-                      🔗 Link de {generatedToken.guardianName}:
-                    </p>
-                    <div className="mt-1 flex items-center gap-2">
-                      <input
-                        readOnly
-                        value={generatedToken.link}
-                        className="flex-1 rounded border border-emerald-200 bg-white px-2 py-1 text-xs text-emerald-700"
-                        onFocus={(e) => e.target.select()}
-                      />
-                      <a
-                        href={generatedToken.link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="rounded bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-700"
-                      >
-                        Abrir ↗
-                      </a>
-                      <button
-                        onClick={() => navigator.clipboard.writeText(generatedToken.link)}
-                        className="rounded bg-emerald-500 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-600"
-                      >
-                        Copiar
-                      </button>
-                    </div>
-                    <p className="mt-1 text-[10px] text-emerald-600">
-                      ⚠️ Guarde esse link. Ele só aparece uma vez.
-                    </p>
-                  </div>
-                )}
-              </div>
+              <GuardianAccessLink guardian={g} onChange={reload} />
             </Card>
           ))
         )}

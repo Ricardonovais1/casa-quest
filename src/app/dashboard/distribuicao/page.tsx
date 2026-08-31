@@ -47,6 +47,7 @@ export default function DistributionPage() {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- data load on mount; state is only set after the await resolves
     if (family) load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [family]);
