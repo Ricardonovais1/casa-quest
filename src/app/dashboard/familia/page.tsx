@@ -11,10 +11,11 @@ import { getSupabaseBrowserClient } from '@/infrastructure/supabase/client';
 import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ensureCurrentDistribution, type AssignmentRow } from '@/lib/distribution';
+import { GuardianAccessLink } from '@/components/guardians/guardian-access-link';
 import { formatDate } from '@/lib/utils';
 
 export default function FamilyPage() {
-  const { family, guardians, morGuardian, loading, error, reload } = useFamily();
+  const { family, guardians, loading, error, reload } = useFamily();
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
 
   const supabase = getSupabaseBrowserClient();
@@ -99,12 +100,12 @@ export default function FamilyPage() {
                       </p>
                     </div>
                   </div>
-                  {!g.is_mor && g.access_token_hash && (
-                    <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-medium text-emerald-700">
-                      🔗 Link ativo
-                    </span>
-                  )}
                 </div>
+
+                {/* Shareable access link, right where the members are listed */}
+                {!g.is_mor && (
+                  <GuardianAccessLink guardian={g} onChange={reload} variant="compact" />
+                )}
 
                 {/* Assigned collaborative actions */}
                 {!g.is_mor && mine.length > 0 && (

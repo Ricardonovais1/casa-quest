@@ -7,6 +7,7 @@ import { notFound } from 'next/navigation';
 import { ensureCurrentDistribution } from '@/lib/distribution';
 import { resolveGuardianToken } from '@/lib/guardian-token';
 import { localDayRangeUtc } from '@/lib/day-range';
+import { getGuardianEnergy } from '@/lib/guardian-energy';
 import { formatDate } from '@/lib/utils';
 import {
   GuardianActionCard,
@@ -53,7 +54,7 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
   // virou o dia e a lista esvaziaria justo no horário das tarefas da noite.
   const { data: familyRow } = await supabase
     .from('families')
-    .select('timezone')
+    .select('timezone, recovery_enabled, auxilio_enabled, escalada_enabled')
     .eq('id', guardian.family_id)
     .single();
 
@@ -68,6 +69,52 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
     .gte('due_at', startUtc)
     .lt('due_at', endUtc)
     .order('due_at', { ascending: true });
+
+  // Real energy for the guardian's current mission. Without an active mission
+  // there is nothing to measure, so the block is simply not shown.
+  const { data: mission } = await supabase
+    .from('missions')
+    .select('id, start_at')
+    .eq('family_id', guardian.family_id)
+    .order('start_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const extraActions = [
+    familyRow?.recovery_enabled && {
+      icon: '🔄',
+      label: 'Compensar',
+      subtitle: 'Recuperar',
+      color: 'border-orange-300 bg-orange-50',
+    },
+    familyRow?.auxilio_enabled && {
+      icon: '🤝',
+      label: 'Ajudar',
+      subtitle: 'Auxílio',
+      color: 'border-emerald-300 bg-emerald-50',
+    },
+    familyRow?.escalada_enabled && {
+      icon: '⬆️',
+      label: 'Ir Além',
+      subtitle: 'Escalada',
+      color: 'border-purple-300 bg-purple-50',
+    },
+  ].filter(Boolean) as {
+    icon: string;
+    label: string;
+    subtitle: string;
+    color: string;
+  }[];
+
+  const energy = mission
+    ? await getGuardianEnergy(
+        supabase,
+        guardian.id,
+        mission.id,
+        guardian.family_id,
+        new Date(mission.start_at)
+      )
+    : null;
 
   // Flatten the joined template into the shape the card expects. PostgREST
   // returns the relation as an object or a single-element array depending on
@@ -100,25 +147,36 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
       </div>
 
       {/* Energy indicator */}
-      <div className="mx-auto mt-4 max-w-md px-4">
-        <div className="rounded-xl bg-white p-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium text-gray-500">Compromisso</span>
-            <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-              🟢 Compromisso Forte
-            </span>
-          </div>
-          <div className="mt-2">
-            <div className="h-2 rounded-full bg-gray-200">
-              <div className="h-2 rounded-full bg-emerald-500" style={{ width: '95%' }} />
+      {energy && (
+        <div className="mx-auto mt-4 max-w-md px-4">
+          <div className="rounded-xl bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-500">Compromisso</span>
+              <span className={`rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold ${energy.qualitative.color}`}>
+                {energy.qualitative.emoji} {energy.qualitative.label}
+              </span>
+            </div>
+            <div className="mt-2">
+              <div className="h-2 rounded-full bg-gray-200">
+                <div
+                  className="h-2 rounded-full bg-emerald-500 transition-all"
+                  style={{ width: `${Math.min(100, Math.max(0, energy.percentage))}%` }}
+                />
+              </div>
+              <p className="mt-1 text-right text-[11px] text-gray-400">
+                {energy.percentage}%
+              </p>
+            </div>
+            <div className="mt-1 flex items-center gap-4 text-xs text-gray-500">
+              <span>
+                🔥 Constância: {energy.streakDays}{' '}
+                {energy.streakDays === 1 ? 'dia' : 'dias'}
+              </span>
+              <span>🤝 Cooperação: {energy.cooperationScore} pts</span>
             </div>
           </div>
-          <div className="mt-2 flex items-center gap-4 text-xs text-gray-500">
-            <span>🔥 Constância: 12 dias</span>
-            <span>🤝 Cooperação: 8 pts</span>
-          </div>
         </div>
-      </div>
+      )}
 
       {/* Monthly responsibilities (distribution) */}
       {myAssignments.length > 0 && (
@@ -161,33 +219,22 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
         )}
       </div>
 
-      {/* Extra actions */}
-      <div className="mx-auto mt-6 max-w-md px-4">
-        <h2 className="text-sm font-semibold text-gray-700">Ações Extras</h2>
-        <div className="mt-2 grid grid-cols-3 gap-3">
-          <ExtraActionCard
-            icon="🔄"
-            label="Compensar"
-            subtitle="Recuperar"
-            color="border-orange-300 bg-orange-50"
-            disabled={true}
-          />
-          <ExtraActionCard
-            icon="🤝"
-            label="Ajudar"
-            subtitle="Auxílio"
-            color="border-emerald-300 bg-emerald-50"
-            disabled={true}
-          />
-          <ExtraActionCard
-            icon="⬆️"
-            label="Ir Além"
-            subtitle="Escalada"
-            color="border-purple-300 bg-purple-50"
-            disabled={true}
-          />
+      {/* Extra actions — only the ones the family actually enabled.
+          Os fluxos ainda não existem, então aparecem marcados como "em breve"
+          em vez de botões que não fazem nada. */}
+      {extraActions.length > 0 && (
+        <div className="mx-auto mt-6 max-w-md px-4">
+          <h2 className="text-sm font-semibold text-gray-700">Ações Extras</h2>
+          <div className="mt-2 grid grid-cols-3 gap-3">
+            {extraActions.map((extra) => (
+              <ExtraActionCard key={extra.label} {...extra} />
+            ))}
+          </div>
+          <p className="mt-2 text-center text-[11px] text-gray-400">
+            Em breve — ainda não dá para registrar essas ações por aqui.
+          </p>
         </div>
-      </div>
+      )}
 
       {/* Bottom spacer for mobile nav */}
       <div className="h-20" />
@@ -200,24 +247,19 @@ function ExtraActionCard({
   label,
   subtitle,
   color,
-  disabled,
 }: {
   icon: string;
   label: string;
   subtitle: string;
   color: string;
-  disabled: boolean;
 }) {
   return (
-    <button
-      disabled={disabled}
-      className={`flex flex-col items-center gap-1 rounded-xl border-2 ${color} p-3 text-center transition-colors ${
-        disabled ? 'opacity-50' : 'hover:shadow-sm'
-      }`}
+    <div
+      className={`flex flex-col items-center gap-1 rounded-xl border-2 border-dashed ${color} p-3 text-center opacity-60`}
     >
       <span className="text-2xl">{icon}</span>
       <span className="text-xs font-semibold text-gray-900">{label}</span>
       <span className="text-[10px] text-gray-500">{subtitle}</span>
-    </button>
+    </div>
   );
 }

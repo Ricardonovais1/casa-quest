@@ -14,11 +14,21 @@ interface Props {
   guardian: GuardianData;
   /** Called after the link changes so the parent can refresh its data. */
   onChange: () => void;
+  /**
+   * "compact" shows only the shareable link (open/copy/WhatsApp), for the
+   * family overview. Generating and revoking stay on the Guardiões screen,
+   * which is where guardians are managed.
+   */
+  variant?: 'full' | 'compact';
 }
 
 type Status = 'idle' | 'working' | 'error';
 
-export function GuardianAccessLink({ guardian, onChange }: Props) {
+export function GuardianAccessLink({
+  guardian,
+  onChange,
+  variant = 'full',
+}: Props) {
   const [status, setStatus] = useState<Status>('idle');
   const [message, setMessage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -76,6 +86,49 @@ export function GuardianAccessLink({ guardian, onChange }: Props) {
     : '#';
 
   const working = status === 'working';
+
+  if (variant === 'compact') {
+    if (!link || isExpired) {
+      return (
+        <p className="mt-2 text-[11px] text-gray-400">
+          {isExpired
+            ? '⏰ Link expirado — gere um novo em Guardiões'
+            : isLegacy
+              ? '⚠️ Link antigo não exibível — gere um novo em Guardiões'
+              : 'Sem link de acesso — gere um em Guardiões'}
+        </p>
+      );
+    }
+
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <a
+          href={link}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="min-w-0 flex-1 truncate rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-800 underline decoration-emerald-400 underline-offset-2 hover:bg-emerald-100"
+          title={link}
+        >
+          {link}
+        </a>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="shrink-0 rounded-md bg-gray-800 px-2 py-1 text-[11px] font-semibold text-white hover:bg-gray-700"
+        >
+          {copied ? 'Copiado ✓' : 'Copiar'}
+        </button>
+        <a
+          href={whatsappHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 rounded-md bg-[#25D366] px-2 py-1 text-[11px] font-semibold text-white hover:brightness-95"
+        >
+          WhatsApp
+        </a>
+      </div>
+    );
+  }
 
   return (
     <div className="mt-3 border-t border-gray-100 pt-3">
