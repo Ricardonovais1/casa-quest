@@ -78,3 +78,64 @@ export function localDayRangeUtc(
     endUtc: new Date(startMs + 86_400_000).toISOString(),
   };
 }
+
+/**
+ * The UTC instant of a local wall-clock time (`YYYY-MM-DD` + `HH:MM[:SS]`)
+ * in `timeZone`. This is how a template's `default_due_time` becomes a
+ * concrete `due_at` for a given day.
+ */
+export function localDateTimeToUtc(
+  timeZone: string,
+  dateStr: string,
+  timeStr: string
+): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const [hh = 0, mm = 0, ss = 0] = timeStr.split(':').map(Number);
+  const naive = Date.UTC(year!, month! - 1, day!, hh, mm, ss);
+
+  // Two passes so a DST edge near the target instant resolves correctly.
+  let offset = timeZoneOffsetMs(timeZone, new Date(naive));
+  offset = timeZoneOffsetMs(timeZone, new Date(naive - offset));
+
+  return new Date(naive - offset).toISOString();
+}
+
+/** Day of week (0 = Sunday … 6 = Saturday) in `timeZone` at the instant. */
+export function weekdayInTz(timeZone: string, at: Date = new Date()): number {
+  const name = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short' }).format(at);
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(name);
+}
+
+/** Wall-clock `HH:MM` of an instant in `timeZone` (for display). */
+export function localTimeString(timeZone: string, at: Date | string): string {
+  const d = typeof at === 'string' ? new Date(at) : at;
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
+}
+
+/** Add `days` to a `YYYY-MM-DD` string (calendar arithmetic, no timezone). */
+export function addDays(dateStr: string, days: number): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(year!, month! - 1, day! + days)).toISOString().slice(0, 10);
+}
+
+/**
+ * Long, friendly date in Portuguese for a `YYYY-MM-DD` string,
+ * e.g. "quarta-feira, 2 de setembro".
+ */
+export function friendlyDate(dateStr: string): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const d = new Date(Date.UTC(year!, month! - 1, day!, 12));
+  const text = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'UTC',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(d);
+  // "quarta-feira, 2 de setembro" → "Quarta-feira, 2 de setembro"
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}

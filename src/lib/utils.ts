@@ -10,14 +10,25 @@ export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));
 }
 
-/** Format a date as a localized string */
+/**
+ * Format a date as a localized string.
+ * A bare `YYYY-MM-DD` (Postgres DATE) is a calendar day, not an instant:
+ * parsing it with `new Date()` yields UTC midnight, which the Americas
+ * display as the previous day. So it is formatted as-is, timezone-free.
+ */
 export function formatDate(date: Date | string, locale = 'pt-BR'): string {
+  const options: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' };
+
+  if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const [y, m, d] = date.split('-').map(Number);
+    return new Date(Date.UTC(y!, m! - 1, d!, 12)).toLocaleDateString(locale, {
+      ...options,
+      timeZone: 'UTC',
+    });
+  }
+
   const d = typeof date === 'string' ? new Date(date) : date;
-  return d.toLocaleDateString(locale, {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
+  return d.toLocaleDateString(locale, options);
 }
 
 /** Format a time as HH:MM */

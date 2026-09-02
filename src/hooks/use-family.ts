@@ -2,10 +2,12 @@
 
 // ============================================================
 // Casa Quest — Hook: useFamily
-// Loads the current user's family, guardians, and settings
+// Loads the current user's family, guardians, and settings.
+// A logged-in user without a family is sent to the onboarding.
 // ============================================================
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { getSupabaseBrowserClient } from '@/infrastructure/supabase/client';
 
 export interface FamilyData {
@@ -47,6 +49,7 @@ export function useFamily() {
   const [morGuardian, setMorGuardian] = useState<GuardianData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
   /**
    * Fetches everything and only touches state after an await, so mounting
@@ -64,16 +67,16 @@ export function useFamily() {
       }
 
       // Find the user's guardian profile (as Mor)
-      const { data: mor, error: morError } = await supabase
+      const { data: mor } = await supabase
         .from('guardians')
         .select('*')
         .eq('user_id', user.id)
         .eq('is_mor', true)
-        .single();
+        .maybeSingle();
 
-      if (morError || !mor) {
-        setError('Guardião-Mor não encontrado. Complete o onboarding.');
-        setLoading(false);
+      if (!mor) {
+        // Account exists but the family was never created: finish onboarding.
+        router.replace('/onboarding');
         return;
       }
 
@@ -105,12 +108,12 @@ export function useFamily() {
       if (!gError && allGuardians) {
         setGuardians(allGuardians);
       }
+      setLoading(false);
     } catch {
       setError('Erro ao carregar dados');
-    } finally {
       setLoading(false);
     }
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data load on mount; fetchAll only sets state after its awaits resolve

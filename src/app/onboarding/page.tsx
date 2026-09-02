@@ -5,10 +5,11 @@
 // Multi-step wizard for initial family setup
 // ============================================================
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getSupabaseBrowserClient } from '@/infrastructure/supabase/client';
 import { seedDefaultActions } from '@/lib/default-actions';
+import { inputClass } from '@/components/ui/page';
 
 type Step =
   | 'welcome'
@@ -24,9 +25,13 @@ type Step =
   | 'escalada'
   | 'summary';
 
-const TOTAL_STEPS = 11;
+const STEPS: Step[] = [
+  'welcome', 'family-name', 'participants', 'mor-name', 'guardians',
+  'confirmation', 'tolerance', 'mission', 'recovery', 'auxilio', 'escalada', 'summary',
+];
 
 export default function OnboardingPage() {
+  const [checking, setChecking] = useState(true);
   const [step, setStep] = useState<Step>('welcome');
   const [familyName, setFamilyName] = useState('');
   const [participantCount, setParticipantCount] = useState(2);
@@ -37,17 +42,39 @@ export default function OnboardingPage() {
   const [missionDays, setMissionDays] = useState(15);
   const [recoveryEnabled, setRecoveryEnabled] = useState(true);
   const [auxilioEnabled, setAuxilioEnabled] = useState(true);
-  const [escaladaEnabled, setEscaladaEnabled] = useState(false);
+  const [escaladaEnabled, setEscaladaEnabled] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
-  const steps: Step[] = [
-    'welcome', 'family-name', 'participants', 'mor-name', 'guardians',
-    'confirmation', 'tolerance', 'mission', 'recovery', 'auxilio', 'escalada', 'summary',
-  ];
-  const currentIndex = steps.indexOf(step);
-  const progress = Math.round((currentIndex / (steps.length - 1)) * 100);
+  const currentIndex = STEPS.indexOf(step);
+  const progress = Math.round((currentIndex / (STEPS.length - 1)) * 100);
+
+  // Needs a session; a user who already has a family goes to the dashboard.
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    async function check() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.replace('/login?redirect=%2Fonboarding');
+        return;
+      }
+      const { data: mor } = await supabase
+        .from('guardians')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('is_mor', true)
+        .maybeSingle();
+      if (mor) {
+        router.replace('/dashboard');
+        return;
+      }
+      const suggested = (user.user_metadata?.full_name as string | undefined)?.trim();
+      if (suggested) setMorName(suggested);
+      setChecking(false);
+    }
+    check();
+  }, [router]);
 
   async function handleFinish() {
     setLoading(true);
@@ -57,17 +84,20 @@ export default function OnboardingPage() {
     const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) {
-      setError('Sessão expirada. Faça login novamente.');
+      setError('Sua sessão expirou. Entre novamente para continuar.');
       setLoading(false);
       return;
     }
+
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Sao_Paulo';
 
     // 1. Create family
     const { data: family, error: familyError } = await supabase
       .from('families')
       .insert({
-        name: familyName,
+        name: familyName.trim(),
         created_by: user.id,
+        timezone,
         quorum_type: 'fixed',
         quorum_small_family: 1,
         quorum_large_family: 1,
@@ -82,7 +112,7 @@ export default function OnboardingPage() {
       .single();
 
     if (familyError || !family) {
-      setError('Erro ao criar família: ' + (familyError?.message || 'desconhecido'));
+      setError('Não foi possível criar a família: ' + (familyError?.message || 'erro desconhecido'));
       setLoading(false);
       return;
     }
@@ -92,39 +122,36 @@ export default function OnboardingPage() {
       .from('guardians')
       .insert({
         family_id: family.id,
-        name: morName || user.user_metadata?.full_name || 'Guardião-Mor',
+        name: morName.trim() || user.user_metadata?.full_name || 'Guardião-Mor',
         is_mor: true,
         email: user.email,
         user_id: user.id,
       });
 
     if (morError) {
-      setError('Erro ao criar guardião-mor');
+      await supabase.from('families').delete().eq('id', family.id);
+      setError('Não foi possível criar o seu perfil de Guardião-Mor: ' + morError.message);
       setLoading(false);
       return;
     }
 
     // 3. Create guardian profiles
-    for (const name of guardianNames) {
-      if (name.trim()) {
-        await supabase.from('guardians').insert({
-          family_id: family.id,
-          name: name.trim(),
-          is_mor: false,
-        });
-      }
+    const kids = guardianNames.map((n) => n.trim()).filter(Boolean);
+    if (kids.length > 0) {
+      await supabase.from('guardians').insert(
+        kids.map((name) => ({ family_id: family.id, name, is_mor: false }))
+      );
     }
 
     // 4. Seed escalada categories
-    const defaultCategories = [
+    await supabase.from('escalada_categories').insert([
       { family_id: family.id, name: 'Missões', base_points: 2, bonus_multiplier: 1.5, max_per_mission: 10 },
       { family_id: family.id, name: 'Gentilezas', base_points: 1, bonus_multiplier: 2.0, max_per_mission: 8 },
       { family_id: family.id, name: 'Autoaperfeiçoamento', base_points: 2, bonus_multiplier: 1.2, max_per_mission: 12 },
       { family_id: family.id, name: 'Rendimento Escolar', base_points: 3, bonus_multiplier: 1.0, max_per_mission: 15 },
-    ];
-    await supabase.from('escalada_categories').insert(defaultCategories);
+    ]);
 
-    // 5. Seed the default action catalog (Hábitos, Colaboração, Tropeços, Missões)
+    // 5. Seed the default action catalog (Hábitos, Colaboração, Tropeços, Missões…)
     await seedDefaultActions(supabase, family.id);
 
     router.push('/dashboard');
@@ -137,11 +164,9 @@ export default function OnboardingPage() {
         return (
           <div className="text-center">
             <span className="text-6xl">🏠</span>
-            <h1 className="mt-4 text-3xl font-bold text-gray-900">
-              Bem-vindo ao Casa Quest!
-            </h1>
+            <h1 className="mt-4 text-3xl font-bold text-gray-900">Bem-vindo à Casa Quest!</h1>
             <p className="mt-2 text-gray-500">
-              Vamos configurar sua família em menos de 3 minutos.
+              Vamos montar a sua casa em menos de 3 minutos. Tudo pode ser ajustado depois.
             </p>
           </div>
         );
@@ -153,14 +178,14 @@ export default function OnboardingPage() {
               Qual o nome da sua família?
             </label>
             <p className="mb-4 text-sm text-gray-500">
-              Ex: &quot;Família Silva&quot;, &quot;Clã dos Santos&quot;
+              Ex: &quot;Família Silva&quot;, &quot;Clã dos Santos&quot;, &quot;Casa da Vó&quot;
             </p>
             <input
               type="text"
               value={familyName}
               onChange={(e) => setFamilyName(e.target.value)}
               placeholder="Família Silva"
-              className="w-full rounded-lg border border-gray-300 px-4 py-3 text-lg focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className={`${inputClass} py-3 text-lg`}
               autoFocus
             />
           </div>
@@ -173,15 +198,17 @@ export default function OnboardingPage() {
               Quantas pessoas vão participar?
             </label>
             <p className="mb-4 text-sm text-gray-500">
-              Contando com você (Guardião-Mor) e as crianças/adolescentes
+              Contando com você (Guardião-Mor) e as crianças ou adolescentes (Guardiões)
             </p>
             <div className="flex gap-3">
-              {[2, 3, 4, 5].map((n) => (
+              {[2, 3, 4, 5, 6].map((n) => (
                 <button
                   key={n}
                   onClick={() => {
                     setParticipantCount(n);
-                    setGuardianNames(Array(n - 1).fill(''));
+                    setGuardianNames((prev) =>
+                      Array.from({ length: n - 1 }, (_, i) => prev[i] ?? '')
+                    );
                   }}
                   className={`flex-1 rounded-xl py-4 text-center text-lg font-bold transition-colors ${
                     participantCount === n
@@ -200,17 +227,17 @@ export default function OnboardingPage() {
         return (
           <div>
             <label className="block text-lg font-semibold text-gray-900">
-              Qual o seu nome?
+              Como a família te chama?
             </label>
             <p className="mb-4 text-sm text-gray-500">
-              Você será o Guardião-Mor da família
+              Você será o Guardião-Mor: configura as regras, confirma as ações e decide a mesada.
             </p>
             <input
               type="text"
               value={morName}
               onChange={(e) => setMorName(e.target.value)}
               placeholder="Seu nome"
-              className="w-full rounded-lg border border-gray-300 px-4 py-3 text-lg focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className={`${inputClass} py-3 text-lg`}
               autoFocus
             />
           </div>
@@ -220,10 +247,10 @@ export default function OnboardingPage() {
         return (
           <div>
             <label className="block text-lg font-semibold text-gray-900">
-              Nomes dos Guardiões
+              Quem são os Guardiões?
             </label>
             <p className="mb-4 text-sm text-gray-500">
-              Digite o nome de cada criança ou adolescente
+              O nome de cada criança ou adolescente. Eles vão receber um link próprio, sem senha.
             </p>
             <div className="space-y-3">
               {guardianNames.map((name, i) => (
@@ -237,7 +264,7 @@ export default function OnboardingPage() {
                     setGuardianNames(updated);
                   }}
                   placeholder={`Guardião ${i + 1}`}
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  className={`${inputClass} py-3`}
                   autoFocus={i === 0}
                 />
               ))}
@@ -252,22 +279,25 @@ export default function OnboardingPage() {
               ⚖️ Confirmação de ações
             </label>
             <p className="mb-4 text-sm text-gray-500">
-              As ações precisam que alguém confirme que foram feitas?
+              Quando um guardião marca &quot;Fiz!&quot;, alguém precisa confirmar?
             </p>
             <div className="space-y-2">
               <OptionButton
                 selected={confirmation === 'none'}
                 onClick={() => setConfirmation('none')}
                 title="Sem confirmação"
-                subtitle="Cada um marca o que fez, sem precisar de outra pessoa"
+                subtitle="Vale na hora. Bom para famílias que já confiam no processo."
               />
               <OptionButton
                 selected={confirmation === 'one'}
                 onClick={() => setConfirmation('one')}
-                title="1 pessoa confirma"
-                subtitle="Recomendado — uma pessoa valida a ação"
+                title="Você confirma"
+                subtitle="Recomendado no começo. A ação fica “aguardando” até você validar."
               />
             </div>
+            <p className="mt-3 text-xs text-gray-400">
+              Isso define o padrão. Cada ação pode ter a própria regra.
+            </p>
           </div>
         );
 
@@ -278,9 +308,9 @@ export default function OnboardingPage() {
               ⏰ Tolerância para atrasos
             </label>
             <p className="mb-4 text-sm text-gray-500">
-              Quantos minutos de atraso são aceitos antes de virar falta?
+              Cada ação tem um horário. Quantos minutos depois dele ainda vale, antes de virar falta?
             </p>
-            <div className="flex gap-3 flex-wrap">
+            <div className="flex flex-wrap gap-3">
               {[15, 30, 60, 120].map((t) => (
                 <button
                   key={t}
@@ -305,7 +335,7 @@ export default function OnboardingPage() {
               📅 Duração das missões
             </label>
             <p className="mb-4 text-sm text-gray-500">
-              Cada missão dura quantos dias?
+              Uma missão é o período de uma mesada. No fim dela, a energia de cada guardião sugere o valor.
             </p>
             <div className="flex gap-3">
               {[7, 15, 30].map((d) => (
@@ -329,15 +359,15 @@ export default function OnboardingPage() {
         return (
           <div>
             <label className="block text-lg font-semibold text-gray-900">
-              🔄 Ações de Recuperação
+              🏆 Missões extras (recuperação)
             </label>
             <p className="mb-4 text-sm text-gray-500">
-              Guardiões podem compensar faltas com ações extras? (+2 energia por ação)
+              Tarefas maiores, como lavar o carro ou limpar o banheiro, que devolvem energia perdida com faltas. Sempre há um caminho de volta.
             </p>
             <ToggleOption
               enabled={recoveryEnabled}
               setEnabled={setRecoveryEnabled}
-              label="Permitir recuperação"
+              label="Permitir missões extras"
             />
           </div>
         );
@@ -349,7 +379,7 @@ export default function OnboardingPage() {
               🤝 Auxílio entre Guardiões
             </label>
             <p className="mb-4 text-sm text-gray-500">
-              Um Guardião pode ajudar outro que falhou? (gera cooperação)
+              Um guardião pode fazer a tarefa de outro. Isso vale cooperação, uma medida separada da energia.
             </p>
             <ToggleOption
               enabled={auxilioEnabled}
@@ -363,10 +393,10 @@ export default function OnboardingPage() {
         return (
           <div>
             <label className="block text-lg font-semibold text-gray-900">
-              ⬆️ Ações de Escalada
+              ⬆️ Escalada
             </label>
             <p className="mb-4 text-sm text-gray-500">
-              Guardiões podem ir além com ações extras em categorias como leitura e gentileza? (energia extra)
+              Ir além do combinado: gentilezas, estudo, autoaperfeiçoamento. Soma energia extra e pode passar de 100.
             </p>
             <ToggleOption
               enabled={escaladaEnabled}
@@ -379,16 +409,18 @@ export default function OnboardingPage() {
       case 'summary':
         return (
           <div>
-            <h2 className="text-xl font-bold text-gray-900">📋 Resumo da configuração</h2>
+            <h2 className="text-xl font-bold text-gray-900">📋 Resumo</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Vamos criar a família com um catálogo de ações pronto. Você ajusta tudo no painel.
+            </p>
             <div className="mt-4 space-y-2 text-sm">
               <SummaryRow label="Família" value={familyName} />
-              <SummaryRow label="Participantes" value={`${participantCount} pessoas`} />
               <SummaryRow label="Guardião-Mor" value={morName} />
-              <SummaryRow label="Guardiões" value={guardianNames.filter(Boolean).join(', ') || 'Nenhum'} />
-              <SummaryRow label="Confirmação" value={confirmation === 'one' ? '1 pessoa confirma' : 'Sem confirmação'} />
+              <SummaryRow label="Guardiões" value={guardianNames.filter((n) => n.trim()).join(', ') || 'Nenhum'} />
+              <SummaryRow label="Confirmação" value={confirmation === 'one' ? 'Você confirma' : 'Sem confirmação'} />
               <SummaryRow label="Tolerância" value={`${tolerance} min`} />
               <SummaryRow label="Missão" value={`${missionDays} dias`} />
-              <SummaryRow label="Recuperação" value={recoveryEnabled ? 'Sim' : 'Não'} />
+              <SummaryRow label="Missões extras" value={recoveryEnabled ? 'Sim' : 'Não'} />
               <SummaryRow label="Auxílio" value={auxilioEnabled ? 'Sim' : 'Não'} />
               <SummaryRow label="Escalada" value={escaladaEnabled ? 'Sim' : 'Não'} />
             </div>
@@ -409,6 +441,17 @@ export default function OnboardingPage() {
     }
   }
 
+  if (checking) {
+    return (
+      <main className="flex min-h-screen items-center justify-center">
+        <div className="text-center">
+          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+          <p className="mt-3 text-sm text-gray-500">Preparando…</p>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="flex min-h-screen flex-col">
       {/* Progress bar */}
@@ -427,13 +470,11 @@ export default function OnboardingPage() {
       {/* Navigation */}
       <div className="border-t border-gray-200 bg-white px-4 py-4">
         <div className="mx-auto flex max-w-md items-center justify-between">
-          {step !== 'welcome' && step !== 'summary' ? (
+          {step !== 'welcome' ? (
             <button
-              onClick={() => {
-                const prevIndex = currentIndex - 1;
-                setStep(steps[prevIndex]!);
-              }}
-              className="text-sm font-medium text-gray-500 hover:text-gray-700"
+              onClick={() => setStep(STEPS[currentIndex - 1]!)}
+              disabled={loading}
+              className="text-sm font-medium text-gray-500 hover:text-gray-700 disabled:opacity-50"
             >
               ← Voltar
             </button>
@@ -445,22 +486,20 @@ export default function OnboardingPage() {
             <button
               onClick={handleFinish}
               disabled={loading}
-              className="rounded-xl bg-indigo-600 px-8 py-3 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+              className="rounded-xl bg-indigo-600 px-8 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
             >
-              {loading ? 'Criando...' : '✨ Criar minha Casa Quest'}
+              {loading ? 'Criando…' : '✨ Criar a minha casa'}
             </button>
           ) : (
             <button
               onClick={() => {
                 const nextIndex = currentIndex + 1;
-                if (nextIndex < steps.length) {
-                  setStep(steps[nextIndex]!);
-                }
+                if (nextIndex < STEPS.length) setStep(STEPS[nextIndex]!);
               }}
               disabled={!canAdvance()}
-              className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+              className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
             >
-              Continuar →
+              {step === 'welcome' ? 'Começar →' : 'Continuar →'}
             </button>
           )}
         </div>
@@ -539,9 +578,9 @@ function ToggleOption({
 
 function SummaryRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex justify-between py-1">
+    <div className="flex justify-between gap-4 py-1">
       <span className="text-gray-500">{label}</span>
-      <span className="font-medium text-gray-900">{value || '—'}</span>
+      <span className="text-right font-medium text-gray-900">{value || '—'}</span>
     </div>
   );
 }

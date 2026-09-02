@@ -2,7 +2,15 @@
 // Casa Quest — Tests: day boundaries in a family's timezone
 // ============================================================
 
-import { localDateString, localDayRangeUtc } from './day-range';
+import {
+  localDateString,
+  localDayRangeUtc,
+  localDateTimeToUtc,
+  weekdayInTz,
+  addDays,
+  localTimeString,
+  friendlyDate,
+} from './day-range';
 
 const SP = 'America/Sao_Paulo'; // UTC-3, no DST
 
@@ -69,5 +77,48 @@ describe('localDayRangeUtc', () => {
     const { date, startUtc } = localDayRangeUtc('Asia/Tokyo', at);
     expect(date).toBe('2026-08-31');
     expect(startUtc).toBe('2026-08-30T15:00:00.000Z'); // 00:00 JST
+  });
+});
+
+describe('localDateTimeToUtc', () => {
+  it('converts a São Paulo wall-clock time to UTC', () => {
+    expect(localDateTimeToUtc(SP, '2026-09-02', '20:00')).toBe('2026-09-02T23:00:00.000Z');
+  });
+
+  it('accepts HH:MM:SS as stored by Postgres TIME', () => {
+    expect(localDateTimeToUtc(SP, '2026-09-02', '06:00:00')).toBe('2026-09-02T09:00:00.000Z');
+  });
+
+  it('crosses the UTC day boundary correctly', () => {
+    expect(localDateTimeToUtc(SP, '2026-09-02', '22:30')).toBe('2026-09-03T01:30:00.000Z');
+  });
+
+  it('is the inverse of localDayRangeUtc at midnight', () => {
+    expect(localDateTimeToUtc('Asia/Tokyo', '2026-08-31', '00:00')).toBe(
+      '2026-08-30T15:00:00.000Z'
+    );
+  });
+});
+
+describe('weekdayInTz', () => {
+  it('reports the local weekday, not the UTC one', () => {
+    // 01:00 UTC on Thursday 2026-09-03 is still Wednesday in São Paulo.
+    expect(weekdayInTz(SP, new Date('2026-09-03T01:00:00Z'))).toBe(3);
+    expect(weekdayInTz('UTC', new Date('2026-09-03T01:00:00Z'))).toBe(4);
+  });
+});
+
+describe('addDays / localTimeString / friendlyDate', () => {
+  it('adds calendar days across month ends', () => {
+    expect(addDays('2026-08-31', 1)).toBe('2026-09-01');
+    expect(addDays('2026-09-01', -1)).toBe('2026-08-31');
+  });
+
+  it('formats the wall-clock time of an instant', () => {
+    expect(localTimeString(SP, '2026-09-02T23:00:00Z')).toBe('20:00');
+  });
+
+  it('writes a friendly Portuguese date', () => {
+    expect(friendlyDate('2026-09-02')).toBe('Quarta-feira, 2 de setembro');
   });
 });

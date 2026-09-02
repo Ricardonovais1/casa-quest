@@ -3,7 +3,7 @@
 // ============================================================
 
 import { z } from 'zod';
-import { ACTION_CATEGORIES, ACTION_TYPES, CONFIRMATION_MODES, QUORUM_TYPES } from './constants';
+import { ACTION_CATEGORIES, ACTION_TYPES, CONFIRMATION_MODES } from './constants';
 
 // ============================================================================
 // Family
@@ -42,13 +42,13 @@ export const createGuardianSchema = z.object({
   name: z.string().min(1, 'Nome é obrigatório').max(100),
   age: z.number().int().min(0).max(120).optional(),
   isMor: z.boolean().default(false),
-  email: z.string().email().optional(),
+  email: z.email().optional(),
 });
 
 export const updateGuardianSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   age: z.number().int().min(0).max(120).optional(),
-  avatarUrl: z.string().url().optional(),
+  avatarUrl: z.url().optional(),
   isActive: z.boolean().optional(),
 });
 
@@ -90,8 +90,8 @@ export type UpdateActionTemplateInput = z.infer<typeof updateActionTemplateSchem
 
 export const createMissionSchema = z.object({
   name: z.string().min(1).max(200),
-  startAt: z.string().datetime({ message: 'Data de início inválida' }),
-  endAt: z.string().datetime({ message: 'Data de fim inválida' }),
+  startAt: z.iso.datetime({ message: 'Data de início inválida' }),
+  endAt: z.iso.datetime({ message: 'Data de fim inválida' }),
   targetRewardAmount: z.number().positive('Valor da mesada deve ser positivo'),
 });
 

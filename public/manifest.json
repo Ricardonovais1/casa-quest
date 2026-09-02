@@ -1,8 +1,9 @@
 {
   "name": "Casa Quest",
-  "short_name": "CasaQuest",
-  "description": "Aplicativo familiar para desenvolver responsabilidade, constância e cooperação.",
+  "short_name": "Casa Quest",
+  "description": "Responsabilidade não se compra, se cultiva. Tarefas da família em missões, com energia de compromisso.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#f9fafb",
   "theme_color": "#6366f1",
@@ -13,13 +14,19 @@
       "src": "/icons/icon-192x192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "/icons/icon-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

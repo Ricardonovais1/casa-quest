@@ -4,7 +4,6 @@
 // ============================================================
 
 import type { CooperationEvent } from './types';
-import { COOPERATION_SCORES } from './types';
 
 /**
  * Compute total cooperation score from an ordered list of events.

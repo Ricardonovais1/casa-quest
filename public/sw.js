@@ -1,73 +1,75 @@
 // ============================================================
 // Casa Quest — Service Worker
-// Cache-first for static assets, network-first for data/API
+// Network-first for pages (always fresh when online, cached copy
+// when offline); cache-first for hashed static assets.
 // ============================================================
 
-const CACHE_NAME = 'casaquest-v1';
-const STATIC_ASSETS = [
-  '/',
+const CACHE_NAME = 'casaquest-v2';
+const PRECACHE = [
   '/manifest.json',
   '/icons/icon-192x192.png',
   '/icons/icon-512x512.png',
 ];
 
-// Install: cache static assets
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
-    })
+    caches.open(CACHE_NAME).then((cache) =>
+      // A single missing asset must not block installation.
+      Promise.allSettled(PRECACHE.map((url) => cache.add(url)))
+    )
   );
   self.skipWaiting();
 });
 
-// Activate: clean old caches
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(
-        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
-      );
-    })
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))
+      )
   );
   self.clients.claim();
 });
 
-// Fetch: cache-first for static, network-first for data
 self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
+  const { request } = event;
+  if (request.method !== 'GET') return;
 
-  // Skip non-GET and Supabase API calls
-  if (event.request.method !== 'GET') return;
-  if (url.pathname.includes('/api/')) return;
-  if (url.hostname.includes('supabase')) return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api/')) return;
 
-  // HTML: network-first (app shell)
-  if (event.request.headers.get('Accept')?.includes('text/html')) {
+  // Pages: network-first with an offline fallback to the last copy.
+  if (request.mode === 'navigate' || request.headers.get('Accept')?.includes('text/html')) {
     event.respondWith(
-      fetch(event.request)
+      fetch(request)
         .then((response) => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, clone);
-          });
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          }
           return response;
         })
-        .catch(() => caches.match(event.request))
+        .catch(() => caches.match(request))
     );
     return;
   }
 
-  // Static assets: cache-first
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      return cached || fetch(event.request).then((response) => {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, clone);
-        });
-        return response;
-      });
-    })
-  );
+  // Hashed build assets and icons: cache-first.
+  if (url.pathname.startsWith('/_next/static/') || url.pathname.startsWith('/icons/')) {
+    event.respondWith(
+      caches.match(request).then(
+        (cached) =>
+          cached ||
+          fetch(request).then((response) => {
+            if (response.ok) {
+              const clone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+            }
+            return response;
+          })
+      )
+    );
+  }
 });

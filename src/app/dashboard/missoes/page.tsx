@@ -1,15 +1,18 @@
 'use client';
 
 // ============================================================
-// Casa Quest — Dashboard: Missions CRUD
+// Casa Quest — Dashboard: Missões
+// Criar, iniciar, encerrar e cancelar missões (períodos de mesada).
 // ============================================================
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useFamily } from '@/hooks/use-family';
 import { getSupabaseBrowserClient } from '@/infrastructure/supabase/client';
 import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { formatDate, formatCurrency } from '@/lib/utils';
+import { PageHeader, EmptyState, Notice, PageSkeleton, inputClass } from '@/components/ui/page';
+import { formatDate, formatCurrency, cn } from '@/lib/utils';
+import { localDateString, addDays } from '@/lib/day-range';
 
 interface Mission {
   id: string;
@@ -21,12 +24,30 @@ interface Mission {
   created_at: string;
 }
 
+interface Result {
+  mission_id: string;
+  guardian_id: string;
+  final_energy: number | null;
+  final_reward: number | null;
+}
+
+const MONTHS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+
+function suggestName(dateStr: string): string {
+  const month = Number(dateStr.slice(5, 7)) - 1;
+  return `Missão de ${MONTHS[month] ?? ''}`.trim();
+}
+
 export default function MissionsPage() {
   const { family, guardians, loading: familyLoading } = useFamily();
   const [missions, setMissions] = useState<Mission[]>([]);
+  const [results, setResults] = useState<Result[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+  const [confirming, setConfirming] = useState<{ id: string; action: 'complete' | 'cancel' } | null>(null);
 
   // Form
   const [name, setName] = useState('');
@@ -35,192 +56,140 @@ export default function MissionsPage() {
   const [targetReward, setTargetReward] = useState('50');
 
   const supabase = getSupabaseBrowserClient();
+  const tz = family?.timezone || 'America/Sao_Paulo';
+  const today = localDateString(tz);
 
-  async function loadMissions() {
+  const loadMissions = useCallback(async () => {
     if (!family) return;
     const { data } = await supabase
       .from('missions')
       .select('*')
       .eq('family_id', family.id)
       .order('created_at', { ascending: false });
-    if (data) setMissions(data);
-    setLoading(false);
-  }
+    const list = (data ?? []) as Mission[];
+    setMissions(list);
 
-  // Captured once per mount — "dias restantes" only needs day-level precision,
-  // and reading the clock during render is non-deterministic.
-  const [now] = useState(() => Date.now());
+    const completed = list.filter((m) => m.status === 'completed').map((m) => m.id);
+    if (completed.length > 0) {
+      const { data: rows } = await supabase
+        .from('mission_guardians')
+        .select('mission_id, guardian_id, final_energy, final_reward')
+        .in('mission_id', completed);
+      setResults((rows ?? []) as Result[]);
+    }
+    setLoading(false);
+  }, [family, supabase]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data load on mount; state is only set after the await resolves
     if (family) loadMissions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [family]);
+  }, [family, loadMissions]);
 
-  function resetForm() {
-    setName('');
-    setStartDate(new Date().toISOString().split('T')[0]!);
-    setDuration(15);
+  function openForm() {
+    const start = today;
+    setName(suggestName(start));
+    setStartDate(start);
+    setDuration(family?.mission_duration_days || 15);
     setTargetReward('50');
-    setShowForm(false);
+    setNotice(null);
+    setShowForm(true);
   }
 
   async function handleCreate() {
     if (!family || !name.trim() || !startDate) return;
     setSaving(true);
+    setNotice(null);
 
-    const start = new Date(startDate);
-    const end = new Date(start);
-    end.setDate(end.getDate() + duration);
+    const endDate = addDays(startDate, duration - 1);
 
     const res = await fetch('/api/missions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: name.trim(),
-        startAt: start.toISOString(),
-        endAt: end.toISOString(),
+        startAt: `${startDate}T12:00:00.000Z`,
+        endAt: `${endDate}T12:00:00.000Z`,
         targetRewardAmount: parseFloat(targetReward) || 50,
       }),
     });
 
     if (res.ok) {
-      resetForm();
+      setShowForm(false);
+      setNotice({ kind: 'success', text: 'Missão criada como rascunho. Inicie quando estiver pronto.' });
       loadMissions();
     } else {
-      const err = await res.json();
-      alert('Erro: ' + (err.error?.message || 'Falha ao criar missão'));
+      const err = await res.json().catch(() => null);
+      setNotice({ kind: 'error', text: err?.error?.message || 'Falha ao criar missão' });
     }
     setSaving(false);
   }
 
-  async function handleActivate(missionId: string) {
-    const supabase = getSupabaseBrowserClient();
-    const nonMorGuardians = guardians.filter(g => !g.is_mor && g.is_active);
-
-    if (nonMorGuardians.length === 0) {
-      alert('Adicione pelo menos um Guardião ativo antes de iniciar uma missão.');
-      return;
-    }
-
-    // Get active action templates
-    const { data: templates } = await supabase
-      .from('action_templates')
-      .select('*')
-      .eq('family_id', family!.id)
-      .eq('is_active', true)
-      .eq('action_type', 'basic');
-
-    if (!templates || templates.length === 0) {
-      alert('Crie pelo menos uma ação básica antes de iniciar uma missão.');
-      return;
-    }
-
-    // Update mission status
-    await supabase
-      .from('missions')
-      .update({ status: 'active' })
-      .eq('id', missionId);
-
-    // Ensure mission_guardians entries exist
-    for (const g of nonMorGuardians) {
-      const { data: existing } = await supabase
-        .from('mission_guardians')
-        .select('id')
-        .eq('mission_id', missionId)
-        .eq('guardian_id', g.id)
-        .maybeSingle();
-
-      if (!existing) {
-        await supabase.from('mission_guardians').insert({
-          mission_id: missionId,
-          guardian_id: g.id,
-          initial_energy: 100,
-          current_energy: 100,
+  async function lifecycle(id: string, action: 'activate' | 'complete' | 'cancel') {
+    setBusyId(id);
+    setNotice(null);
+    setConfirming(null);
+    try {
+      const res = await fetch(`/api/missions/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setNotice({ kind: 'error', text: body?.error?.message || 'Não foi possível atualizar a missão.' });
+      } else if (action === 'activate') {
+        const generated = body?.data?.sync?.generated ?? 0;
+        setNotice({
+          kind: 'success',
+          text: `Missão iniciada! ${generated > 0 ? `${generated} ações geradas para hoje.` : 'As ações de hoje aparecem no painel "Hoje".'}`,
         });
-
-        // Initial energy event
-        await supabase.from('energy_events').insert({
-          guardian_id: g.id,
-          mission_id: missionId,
-          event_type: 'initial_energy',
-          amount: 100,
-          metadata: { reason: 'mission_start' },
-        });
+      } else if (action === 'complete') {
+        setNotice({ kind: 'success', text: 'Missão encerrada. Veja a mesada sugerida em Energia.' });
       }
+    } catch {
+      setNotice({ kind: 'error', text: 'Sem conexão com o servidor.' });
     }
-
-    // Generate today's action instances
-    const today = new Date().toISOString().split('T')[0]!;
-    for (const g of nonMorGuardians) {
-      for (const t of templates) {
-        await supabase.from('mission_actions').insert({
-          mission_id: missionId,
-          guardian_id: g.id,
-          action_template_id: t.id,
-          due_at: `${today}T${t.default_due_time}:00`,
-          status: 'pending',
-        });
-      }
-    }
-
-    loadMissions();
+    await loadMissions();
+    setBusyId(null);
   }
 
-  function getStatusBadge(status: string) {
-    const map: Record<string, { label: string; color: string }> = {
-      draft: { label: 'Rascunho', color: 'bg-gray-100 text-gray-700' },
-      active: { label: 'Em andamento', color: 'bg-emerald-100 text-emerald-700' },
-      completed: { label: 'Concluída', color: 'bg-blue-100 text-blue-700' },
-      cancelled: { label: 'Cancelada', color: 'bg-red-100 text-red-700' },
-    };
-    const s = map[status] || { label: status, color: 'bg-gray-100' };
-    return (
-      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${s.color}`}>
-        {s.label}
-      </span>
-    );
-  }
+  if (familyLoading || loading) return <PageSkeleton blocks={2} />;
 
-  if (familyLoading || loading) {
-    return (
-      <div className="space-y-6 animate-pulse">
-        <div className="h-8 w-48 rounded bg-gray-200" />
-        <div className="h-40 rounded-xl bg-gray-100" />
-      </div>
-    );
-  }
+  const activeMission = missions.find((m) => m.status === 'active');
+  const kids = guardians.filter((g) => !g.is_mor);
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Missões</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            {missions.length} missão{missions.length !== 1 ? 'es' : ''}
-          </p>
-        </div>
-        <Button onClick={() => { resetForm(); setShowForm(!showForm); }}>
-          {showForm ? 'Cancelar' : '+ Nova Missão'}
-        </Button>
-      </div>
+      <PageHeader
+        title="Missões"
+        subtitle="Uma missão é um período com mesada-alvo. A energia de cada guardião define quanto da mesada ele recebe."
+        actions={
+          <Button onClick={showForm ? () => setShowForm(false) : openForm}>
+            {showForm ? 'Cancelar' : '+ Nova missão'}
+          </Button>
+        }
+      />
 
-      {/* Create form */}
+      {notice && <Notice kind={notice.kind}>{notice.text}</Notice>}
+
       {showForm && (
         <Card>
           <CardHeader>
-            <CardTitle>Nova Missão</CardTitle>
-            <CardDescription>Defina o período e o valor-alvo da mesada</CardDescription>
+            <CardTitle>Nova missão</CardTitle>
+            <CardDescription>Ela começa como rascunho. Só passa a gerar ações quando você iniciar.</CardDescription>
           </CardHeader>
           <div className="space-y-3">
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Nome da missão (ex: Missão Julho)"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              autoFocus
-            />
+            <div>
+              <label className="text-xs font-medium text-gray-500">Nome</label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ex: Missão de setembro"
+                className={cn(inputClass, 'mt-1')}
+                autoFocus
+              />
+            </div>
             <div className="flex gap-3">
               <div className="flex-1">
                 <label className="text-xs font-medium text-gray-500">Início</label>
@@ -228,7 +197,7 @@ export default function MissionsPage() {
                   type="date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
+                  className={cn(inputClass, 'mt-1')}
                 />
               </div>
               <div className="flex-1">
@@ -236,7 +205,7 @@ export default function MissionsPage() {
                 <select
                   value={duration}
                   onChange={(e) => setDuration(parseInt(e.target.value))}
-                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
+                  className={cn(inputClass, 'mt-1')}
                 >
                   <option value={7}>7 dias</option>
                   <option value={15}>15 dias</option>
@@ -245,89 +214,157 @@ export default function MissionsPage() {
               </div>
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-500">Mesada-alvo (R$)</label>
+              <label className="text-xs font-medium text-gray-500">Mesada-alvo por guardião (R$)</label>
               <input
                 type="number"
                 value={targetReward}
                 onChange={(e) => setTargetReward(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
+                className={cn(inputClass, 'mt-1')}
                 placeholder="50.00"
                 step="0.01"
                 min="0"
               />
+              <p className="mt-1 text-[11px] text-gray-400">
+                Os guardiões nunca veem este valor — só a energia deles.
+              </p>
             </div>
+            {startDate && (
+              <p className="text-xs text-gray-500">
+                Termina em {formatDate(addDays(startDate, duration - 1))}.
+              </p>
+            )}
             <Button onClick={handleCreate} loading={saving} disabled={!name.trim() || !startDate}>
-              Criar Missão
+              Criar missão
             </Button>
           </div>
         </Card>
       )}
 
-      {/* Missions list */}
-      <div className="space-y-3">
-        {missions.length === 0 ? (
-          <Card>
-            <div className="text-center py-8">
-              <span className="text-4xl">🚀</span>
-              <p className="mt-2 text-sm font-medium text-gray-700">Nenhuma missão</p>
-              <p className="mt-1 text-xs text-gray-500">Crie sua primeira missão para começar!</p>
-            </div>
-          </Card>
-        ) : (
-          missions.map((m) => {
-            const daysLeft = Math.max(0, Math.ceil(
-              (new Date(m.end_at).getTime() - now) / (1000 * 60 * 60 * 24)
-            ));
-            const totalDays = Math.ceil(
-              (new Date(m.end_at).getTime() - new Date(m.start_at).getTime()) / (1000 * 60 * 60 * 24)
-            );
+      {missions.length === 0 ? (
+        <EmptyState
+          icon="🚀"
+          title="Nenhuma missão ainda"
+          description="Crie a primeira: escolha o período e a mesada-alvo. Depois é só iniciar."
+          action={<Button onClick={openForm}>Criar a primeira missão</Button>}
+        />
+      ) : (
+        <div className="space-y-3">
+          {missions.map((m) => {
+            const total = Math.round((Date.parse(m.end_at) - Date.parse(m.start_at)) / 86_400_000) + 1;
+            const day = Math.min(total, Math.max(0, Math.round((Date.parse(today) - Date.parse(m.start_at)) / 86_400_000) + 1));
+            const myResults = results.filter((r) => r.mission_id === m.id);
+            const isConfirming = confirming?.id === m.id;
 
             return (
-              <Card key={m.id}>
-                <div className="flex items-start justify-between">
-                  <div>
-                    <div className="flex items-center gap-2">
+              <Card key={m.id} className={cn(m.status === 'active' && 'border-emerald-200')}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-sm font-semibold text-gray-900">{m.name}</h3>
-                      {getStatusBadge(m.status)}
+                      <StatusBadge status={m.status} />
                     </div>
                     <p className="mt-1 text-xs text-gray-500">
-                      {formatDate(m.start_at)} → {formatDate(m.end_at)}
-                      {m.status === 'active' && ` • Dia ${totalDays - daysLeft} de ${totalDays}`}
+                      {formatDate(m.start_at)} a {formatDate(m.end_at)} · {total} dias
+                      {m.status === 'active' && ` · dia ${day} de ${total}`}
                     </p>
                     <p className="mt-0.5 text-xs text-gray-400">
-                      Mesada-alvo: {formatCurrency(m.target_reward_amount)}
+                      Mesada-alvo: {formatCurrency(m.target_reward_amount)} por guardião
                     </p>
                   </div>
 
-                  {m.status === 'draft' && (
-                    <button
-                      onClick={() => handleActivate(m.id)}
-                      className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-400 transition-colors"
-                    >
-                      ▶ Iniciar
-                    </button>
-                  )}
+                  <div className="flex flex-wrap gap-1.5">
+                    {m.status === 'draft' && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="auxilio"
+                          onClick={() => lifecycle(m.id, 'activate')}
+                          loading={busyId === m.id}
+                          disabled={!!activeMission}
+                          title={activeMission ? 'Encerre a missão em andamento antes' : undefined}
+                        >
+                          ▶ Iniciar
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => lifecycle(m.id, 'cancel')} disabled={busyId === m.id}>
+                          Excluir
+                        </Button>
+                      </>
+                    )}
+                    {m.status === 'active' && !isConfirming && (
+                      <Button size="sm" variant="secondary" onClick={() => setConfirming({ id: m.id, action: 'complete' })}>
+                        Encerrar agora
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
-                {/* Progress bar for active missions */}
+                {isConfirming && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    <span className="flex-1">
+                      Encerrar calcula a energia final e a mesada sugerida. Não dá para reabrir. Continuar?
+                    </span>
+                    <Button size="sm" variant="danger" onClick={() => lifecycle(m.id, 'complete')} loading={busyId === m.id}>
+                      Encerrar
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
+                      Voltar
+                    </Button>
+                  </div>
+                )}
+
                 {m.status === 'active' && (
                   <div className="mt-3">
                     <div className="h-1.5 rounded-full bg-gray-200">
                       <div
                         className="h-1.5 rounded-full bg-indigo-500 transition-all"
-                        style={{ width: `${Math.round(((totalDays - daysLeft) / totalDays) * 100)}%` }}
+                        style={{ width: `${Math.round((day / total) * 100)}%` }}
                       />
                     </div>
                     <p className="mt-1 text-[10px] text-gray-400">
-                      {daysLeft} dia{daysLeft !== 1 ? 's' : ''} restante{daysLeft !== 1 ? 's' : ''}
+                      {total - day === 0 ? 'Último dia' : `${total - day} dia${total - day === 1 ? '' : 's'} restante${total - day === 1 ? '' : 's'}`}
+                      {' · encerra sozinha no dia seguinte ao fim'}
                     </p>
+                  </div>
+                )}
+
+                {m.status === 'completed' && myResults.length > 0 && (
+                  <div className="mt-3 rounded-lg bg-gray-50 p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Resultado</p>
+                    <div className="mt-1 divide-y divide-gray-200">
+                      {myResults.map((r) => {
+                        const g = kids.find((k) => k.id === r.guardian_id);
+                        if (!g) return null;
+                        return (
+                          <div key={r.guardian_id} className="flex items-center justify-between py-1.5 text-sm">
+                            <span className="text-gray-800">🦸 {g.name}</span>
+                            <span className="text-xs text-gray-500">
+                              energia {r.final_energy != null ? Math.round(Number(r.final_energy)) : '—'} ·{' '}
+                              <strong className="text-gray-900">{r.final_reward != null ? formatCurrency(Number(r.final_reward)) : '—'}</strong>
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </Card>
             );
-          })
-        )}
-      </div>
+          })}
+        </div>
+      )}
     </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, { label: string; color: string }> = {
+    draft: { label: 'Rascunho', color: 'bg-gray-100 text-gray-700' },
+    active: { label: 'Em andamento', color: 'bg-emerald-100 text-emerald-700' },
+    completed: { label: 'Concluída', color: 'bg-blue-100 text-blue-700' },
+    cancelled: { label: 'Cancelada', color: 'bg-red-100 text-red-700' },
+  };
+  const s = map[status] || { label: status, color: 'bg-gray-100' };
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${s.color}`}>{s.label}</span>
   );
 }

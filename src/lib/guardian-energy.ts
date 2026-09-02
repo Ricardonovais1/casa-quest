@@ -8,11 +8,13 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+  buildSequences,
   computeEnergy,
   getQualitativeState,
   getEnergyPercentage,
 } from '@/domain/energy/engine';
 import type { AbsenceSequence, QualitativeStateInfo } from '@/domain/energy/types';
+import { localDateString } from './day-range';
 
 // DECISION: recurrence_weight não é coluna em `families`; fica constante
 // aqui até que uma migração a introduza.
@@ -26,6 +28,8 @@ export interface GuardianEnergy {
   cooperationScore: number;
   /** Dias seguidos, até hoje, sem nenhuma ação perdida. */
   streakDays: number;
+  /** Contagens da missão, para transparência. */
+  counts: { done: number; missed: number; pending: number; recoveries: number; escaladaPoints: number };
 }
 
 /**
@@ -56,74 +60,102 @@ export function computeStreakDays(
   return streak;
 }
 
+/**
+ * Anchor an instant to noon UTC of its calendar day in the family's
+ * timezone. Day arithmetic in the engine (consecutive days, streaks) then
+ * works on UTC dates without ever crossing a boundary by accident.
+ */
+function anchorToLocalDay(at: Date | string, timeZone: string): Date {
+  const d = typeof at === 'string' ? new Date(at) : at;
+  return new Date(`${localDateString(timeZone, d)}T12:00:00Z`);
+}
+
 /** Gather everything the energy engine needs and compute it. */
 export async function getGuardianEnergy(
   supabase: SupabaseClient,
   guardianId: string,
   missionId: string,
   familyId: string,
-  missionStart: Date
+  missionStart: Date,
+  now: Date = new Date()
 ): Promise<GuardianEnergy> {
-  const [{ data: mg }, { data: missedActions }, { count: recoveryCount }, { data: escaladaActions }, { data: familyConfig }] =
-    await Promise.all([
-      supabase
-        .from('mission_guardians')
-        .select('initial_energy, cooperation_score')
-        .eq('guardian_id', guardianId)
-        .eq('mission_id', missionId)
-        .maybeSingle(),
-      supabase
-        .from('mission_actions')
-        .select('action_template_id, missed_at')
-        .eq('guardian_id', guardianId)
-        .eq('mission_id', missionId)
-        .eq('status', 'missed')
-        .order('missed_at', { ascending: true }),
-      supabase
-        .from('mission_actions')
-        .select('*', { count: 'exact', head: true })
-        .eq('guardian_id', guardianId)
-        .eq('mission_id', missionId)
-        .eq('status', 'confirmed')
-        .not('recovers_action_id', 'is', null),
-      supabase
-        .from('mission_actions')
-        .select('escalada_points_earned')
-        .eq('guardian_id', guardianId)
-        .eq('mission_id', missionId)
-        .eq('status', 'confirmed')
-        .not('escalada_points_earned', 'is', null),
-      supabase.from('families').select('recovery_value').eq('id', familyId).maybeSingle(),
-    ]);
+  const [
+    { data: mg },
+    { data: missedActions },
+    { count: recoveryCount },
+    { data: confirmedActions },
+    { count: pendingCount },
+    { data: familyConfig },
+  ] = await Promise.all([
+    supabase
+      .from('mission_guardians')
+      .select('initial_energy, cooperation_score')
+      .eq('guardian_id', guardianId)
+      .eq('mission_id', missionId)
+      .maybeSingle(),
+    supabase
+      .from('mission_actions')
+      .select('action_template_id, missed_at, due_at')
+      .eq('guardian_id', guardianId)
+      .eq('mission_id', missionId)
+      .eq('status', 'missed')
+      .order('missed_at', { ascending: true }),
+    supabase
+      .from('mission_actions')
+      .select('*', { count: 'exact', head: true })
+      .eq('guardian_id', guardianId)
+      .eq('mission_id', missionId)
+      .eq('status', 'confirmed')
+      .not('recovers_action_id', 'is', null),
+    supabase
+      .from('mission_actions')
+      .select('escalada_points_earned')
+      .eq('guardian_id', guardianId)
+      .eq('mission_id', missionId)
+      .eq('status', 'confirmed'),
+    supabase
+      .from('mission_actions')
+      .select('*', { count: 'exact', head: true })
+      .eq('guardian_id', guardianId)
+      .eq('mission_id', missionId)
+      .in('status', ['pending', 'marked_done']),
+    supabase
+      .from('families')
+      .select('recovery_value, timezone')
+      .eq('id', familyId)
+      .maybeSingle(),
+  ]);
 
-  const initialEnergy = mg?.initial_energy || 100;
+  const tz = familyConfig?.timezone || 'America/Sao_Paulo';
+  const initialEnergy = Number(mg?.initial_energy) || 100;
 
-  const escaladaPoints = (escaladaActions ?? []).reduce(
+  const escaladaPoints = (confirmedActions ?? []).reduce(
     (sum, a) => sum + (a.escalada_points_earned || 0),
     0
   );
 
-  // Group absences by template — a sequence is per-action, not per-guardian.
+  // Group absences by template — a sequence is per-action, not per-guardian —
+  // and only consecutive days form one sequence (2ⁿ − 1 grows with streaks
+  // of neglect, not with the total count).
   const byTemplate = new Map<string, Date[]>();
   const allMissedDates: Date[] = [];
   for (const action of missedActions ?? []) {
-    if (!action.missed_at) continue;
-    const date = new Date(action.missed_at);
+    const when = action.missed_at ?? action.due_at;
+    if (!when) continue;
+    const date = anchorToLocalDay(when, tz);
     allMissedDates.push(date);
-    const dates = byTemplate.get(action.action_template_id) ?? [];
+    const key = action.action_template_id ?? 'sem-template';
+    const dates = byTemplate.get(key) ?? [];
     dates.push(date);
-    byTemplate.set(action.action_template_id, dates);
+    byTemplate.set(key, dates);
   }
 
   const sequences: AbsenceSequence[] = [];
   for (const [actionTemplateId, dates] of byTemplate) {
-    sequences.push({
-      guardianId,
-      missionId,
-      actionTemplateId,
-      absenceDates: dates.sort((a, b) => a.getTime() - b.getTime()),
-      length: dates.length,
-    });
+    // Two misses of the same template on the same day (e.g. a tropeço
+    // recorded twice) are one absence for sequencing purposes.
+    const unique = Array.from(new Map(dates.map((d) => [d.toISOString(), d])).values());
+    sequences.push(...buildSequences(unique, guardianId, missionId, actionTemplateId));
   }
 
   const result = computeEnergy(sequences, recoveryCount || 0, escaladaPoints, {
@@ -138,6 +170,17 @@ export async function getGuardianEnergy(
     initialEnergy,
     qualitative: getQualitativeState(result.finalEnergy, initialEnergy),
     cooperationScore: mg?.cooperation_score || 0,
-    streakDays: computeStreakDays(allMissedDates, missionStart),
+    streakDays: computeStreakDays(
+      allMissedDates,
+      anchorToLocalDay(missionStart, tz),
+      anchorToLocalDay(now, tz)
+    ),
+    counts: {
+      done: confirmedActions?.length ?? 0,
+      missed: missedActions?.length ?? 0,
+      pending: pendingCount ?? 0,
+      recoveries: recoveryCount ?? 0,
+      escaladaPoints,
+    },
   };
 }

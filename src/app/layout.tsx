@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Geist } from 'next/font/google';
 import './globals.css';
 import { cn } from '@/lib/utils';
+import { RegisterServiceWorker } from '@/components/pwa/register-sw';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -12,8 +13,7 @@ export const viewport: Viewport = {
   themeColor: '#6366f1',
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  viewportFit: 'cover',
 };
 
 export const metadata: Metadata = {
@@ -22,16 +22,26 @@ export const metadata: Metadata = {
     template: '%s | Casa Quest',
   },
   description:
-    'Aplicativo familiar para desenvolver responsabilidade, constância e cooperação. Separe ação de dinheiro e cultive compromisso.',
+    'Responsabilidade não se compra, se cultiva. A Casa Quest organiza as tarefas da família em missões, dá a cada filho um link próprio e transforma constância em energia de compromisso.',
+  applicationName: 'Casa Quest',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
-    statusBarStyle: 'black-translucent',
+    statusBarStyle: 'default',
     title: 'Casa Quest',
   },
   icons: {
-    icon: '/icons/icon-192x192.png',
+    icon: [
+      { url: '/icons/icon-192x192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icons/icon-512x512.png', sizes: '512x512', type: 'image/png' },
+    ],
     apple: '/icons/apple-touch-icon.png',
+  },
+  openGraph: {
+    title: 'Casa Quest',
+    description: 'Responsabilidade não se compra, se cultiva.',
+    locale: 'pt_BR',
+    type: 'website',
   },
 };
 
@@ -46,12 +56,10 @@ export default function RootLayout({
       className={cn(geistSans.variable, 'h-full antialiased')}
       suppressHydrationWarning
     >
-      <head>
-        <meta name="mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-capable" content="yes" />
-      </head>
-      <body className="min-h-full flex flex-col bg-gray-50 text-gray-900">
+      {/* suppressHydrationWarning: browser extensions inject attributes on <body> */}
+      <body className="flex min-h-full flex-col bg-gray-50 text-gray-900" suppressHydrationWarning>
         {children}
+        <RegisterServiceWorker />
       </body>
     </html>
   );

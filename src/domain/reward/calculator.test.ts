@@ -3,7 +3,6 @@
 // ============================================================
 
 import { calculateReward, findRewardTier, calculateCooperationBonus } from './calculator';
-import { DEFAULT_REWARD_TIERS } from './types';
 
 describe('findRewardTier', () => {
   it('90% → 100% reward tier', () => {

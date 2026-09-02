@@ -15,10 +15,11 @@ export function SignOutButton() {
 
   return (
     <button
+      type="button"
       onClick={handleSignOut}
-      className="text-sm text-gray-500 hover:text-red-600 transition-colors"
+      className="text-sm font-medium text-gray-500 transition-colors hover:text-red-600"
     >
-      Sair
+      Sair da conta
     </button>
   );
 }

@@ -5,7 +5,6 @@
 // ============================================================
 
 import { cn } from '@/lib/utils';
-import { QUALITATIVE_STATES } from '@/lib/constants';
 import type { QualitativeStateInfo } from '@/domain/energy/types';
 
 interface EnergyMeterProps {

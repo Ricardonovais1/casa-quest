@@ -1,195 +1,283 @@
 'use client';
 
 // ============================================================
-// Casa Quest — Mor Dashboard: Overview with real data
+// Casa Quest — Mor Dashboard: Visão geral
+// Resumo do dia, missão em andamento e primeiros passos.
 // ============================================================
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useFamily } from '@/hooks/use-family';
 import { getSupabaseBrowserClient } from '@/infrastructure/supabase/client';
-import { Card, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import Link from 'next/link';
+import { PageHeader, Notice, PageSkeleton } from '@/components/ui/page';
+import { localDayRangeUtc, friendlyDate } from '@/lib/day-range';
+import { formatDate } from '@/lib/utils';
+
+interface Mission {
+  id: string;
+  name: string;
+  start_at: string;
+  end_at: string;
+  status: string;
+}
 
 export default function DashboardPage() {
-  const { family, guardians, loading, error } = useFamily();
-  const [activeMission, setActiveMission] = useState<{
-    id: string; name: string; start_at: string; end_at: string;
-    target_reward_amount: number; status: string;
-  } | null>(null);
-  const [pendingConfirmations, setPendingConfirmations] = useState(0);
-  const [todayActions, setTodayActions] = useState(0);
+  const { family, guardians, morGuardian, loading, error } = useFamily();
+  const [mission, setMission] = useState<Mission | null>(null);
+  const [today, setToday] = useState({ total: 0, done: 0, awaiting: 0, missed: 0 });
+  const [templateCount, setTemplateCount] = useState<number | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
 
   const supabase = getSupabaseBrowserClient();
 
   useEffect(() => {
     if (!family) return;
+    const tz = family.timezone || 'America/Sao_Paulo';
 
     async function loadStats() {
-      // Active mission
-      const { data: missions } = await supabase
-        .from('missions')
-        .select('*')
-        .eq('family_id', family!.id)
-        .eq('status', 'active')
-        .order('created_at', { ascending: false })
-        .limit(1);
+      // Generate today's actions / sweep misses before counting.
+      await fetch('/api/families/sync', { method: 'POST' }).catch(() => null);
 
-      if (missions && missions.length > 0) {
-        setActiveMission(missions[0]!);
-
-        // Pending confirmations
-        const { count } = await supabase
-          .from('mission_actions')
+      const [{ data: missions }, { count: templates }] = await Promise.all([
+        supabase
+          .from('missions')
+          .select('id, name, start_at, end_at, status')
+          .eq('family_id', family!.id)
+          .eq('status', 'active')
+          .order('start_at', { ascending: false })
+          .limit(1),
+        supabase
+          .from('action_templates')
           .select('*', { count: 'exact', head: true })
-          .eq('mission_id', missions[0]!.id)
-          .eq('status', 'marked_done');
+          .eq('family_id', family!.id)
+          .eq('is_active', true),
+      ]);
 
-        setPendingConfirmations(count || 0);
+      setTemplateCount(templates ?? 0);
 
-        // Today's actions
-        const today = new Date().toISOString().split('T')[0]!;
-        const { count: todayCount } = await supabase
-          .from('mission_actions')
-          .select('*', { count: 'exact', head: true })
-          .eq('mission_id', missions[0]!.id)
-          .gte('due_at', `${today}T00:00:00`)
-          .lte('due_at', `${today}T23:59:59`);
+      const active = missions?.[0] ?? null;
+      setMission(active);
 
-        setTodayActions(todayCount || 0);
+      if (active) {
+        const { startUtc, endUtc } = localDayRangeUtc(tz);
+        const [{ data: rows }, { count: awaiting }] = await Promise.all([
+          supabase
+            .from('mission_actions')
+            .select('status')
+            .eq('mission_id', active.id)
+            .gte('due_at', startUtc)
+            .lt('due_at', endUtc),
+          supabase
+            .from('mission_actions')
+            .select('*', { count: 'exact', head: true })
+            .eq('mission_id', active.id)
+            .eq('status', 'marked_done'),
+        ]);
+        const list = rows ?? [];
+        setToday({
+          total: list.length,
+          done: list.filter((r) => r.status === 'confirmed').length,
+          awaiting: awaiting ?? 0,
+          missed: list.filter((r) => r.status === 'missed').length,
+        });
       }
+      setStatsLoading(false);
     }
 
     loadStats();
-  }, [family]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [family?.id]);
 
-  if (loading) {
-    return (
-      <div className="space-y-6 animate-pulse">
-        <div className="h-8 w-48 rounded bg-gray-200" />
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-24 rounded-xl bg-gray-100" />
-          ))}
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <PageSkeleton blocks={2} />;
 
-  if (error) {
+  if (error || !family) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-sm text-red-500">{error}</p>
+        <PageHeader title="Visão geral" />
+        <Notice kind="error">{error || 'Família não encontrada'}</Notice>
       </div>
     );
   }
 
-  const nonMorGuardians = guardians.filter(g => !g.is_mor);
-  const hasGuardians = nonMorGuardians.length > 0;
-  const hasActions = true; // Will check from DB
-  const hasMission = !!activeMission;
+  const kids = guardians.filter((g) => !g.is_mor);
+  const activeKids = kids.filter((g) => g.is_active);
+  const kidsWithLink = activeKids.filter((g) => !!g.access_token);
+  const tz = family.timezone || 'America/Sao_Paulo';
+  const { date } = localDayRangeUtc(tz);
+
+  const steps = [
+    { title: 'Família criada', description: family.name, done: true, href: '/dashboard/config' },
+    {
+      title: 'Guardiões cadastrados',
+      description: activeKids.length ? activeKids.map((g) => g.name).join(', ') : 'Cadastre cada criança ou adolescente',
+      done: activeKids.length > 0,
+      href: '/dashboard/guardioes',
+    },
+    {
+      title: 'Ações definidas',
+      description: templateCount ? `${templateCount} ações ativas` : 'Use as ações sugeridas ou crie as suas',
+      done: (templateCount ?? 0) > 0,
+      href: '/dashboard/acoes',
+    },
+    {
+      title: 'Links de acesso enviados',
+      description:
+        activeKids.length === 0
+          ? 'Depois de cadastrar os guardiões'
+          : `${kidsWithLink.length} de ${activeKids.length} guardiões com link`,
+      done: activeKids.length > 0 && kidsWithLink.length === activeKids.length,
+      href: '/dashboard/guardioes',
+    },
+    {
+      title: 'Missão em andamento',
+      description: mission ? mission.name : 'Defina o período e a mesada-alvo',
+      done: !!mission,
+      href: '/dashboard/missoes',
+    },
+  ];
+  const allDone = steps.every((s) => s.done);
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">
-          {family?.name || 'Dashboard'}
-        </h1>
-        <p className="mt-1 text-sm text-gray-500">
-          {activeMission
-            ? `Missão ativa: ${activeMission.name}`
-            : 'Nenhuma missão ativa'}
-        </p>
-      </div>
+      <PageHeader
+        title={`Olá, ${morGuardian?.name?.split(' ')[0] || 'Guardião-Mor'}!`}
+        subtitle={friendlyDate(date)}
+        actions={
+          <Link href="/dashboard/hoje">
+            <Button>☀️ Abrir o dia de hoje</Button>
+          </Link>
+        }
+      />
+
+      {/* Mission */}
+      {mission ? (
+        <MissionCard mission={mission} today={date} stats={today} loading={statsLoading} />
+      ) : (
+        <Card className="border-indigo-200 bg-indigo-50/60">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-indigo-900">Nenhuma missão em andamento</p>
+              <p className="text-xs text-indigo-700">
+                As ações do dia só aparecem para os guardiões durante uma missão.
+              </p>
+            </div>
+            <Link href="/dashboard/missoes">
+              <Button size="sm">Criar missão</Button>
+            </Link>
+          </div>
+        </Card>
+      )}
 
       {/* Stats */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          title="Missão"
-          value={activeMission ? 'Ativa' : 'Nenhuma'}
-          icon="🎯"
-          color="bg-blue-50 text-blue-700"
-          subtitle={activeMission ? `${activeMission.name}` : undefined}
-        />
-        <StatCard
-          title="Ações Hoje"
-          value={String(todayActions)}
-          icon="✅"
-          color="bg-emerald-50 text-emerald-700"
-          subtitle="pendentes"
-        />
-        <StatCard
-          title="Confirmações"
-          value={String(pendingConfirmations)}
-          icon="👀"
-          color="bg-amber-50 text-amber-700"
-          subtitle="aguardando"
-        />
-        <StatCard
-          title="Guardiões"
-          value={String(nonMorGuardians.length)}
-          icon="🦸"
-          color="bg-indigo-50 text-indigo-700"
-          subtitle="ativos"
-        />
+        <StatCard title="Guardiões" value={String(activeKids.length)} icon="🦸" tone="bg-indigo-50 text-indigo-700" subtitle="ativos" />
+        <StatCard title="Ações de hoje" value={mission ? `${today.done}/${today.total}` : '—'} icon="✅" tone="bg-emerald-50 text-emerald-700" subtitle="feitas" />
+        <StatCard title="Aguardando você" value={mission ? String(today.awaiting) : '—'} icon="⏳" tone="bg-amber-50 text-amber-700" subtitle="confirmações" href="/dashboard/hoje" />
+        <StatCard title="Faltas hoje" value={mission ? String(today.missed) : '—'} icon="✕" tone="bg-red-50 text-red-700" subtitle="após a tolerância" />
       </div>
 
       {/* Setup checklist */}
+      {!allDone && (
+        <Card>
+          <CardHeader>
+            <CardTitle>🚀 Primeiros passos</CardTitle>
+            <CardDescription>Cinco passos e a casa está rodando.</CardDescription>
+          </CardHeader>
+          <div className="space-y-1">
+            {steps.map((s, i) => (
+              <Step key={s.title} number={i + 1} {...s} />
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* How it works (compact) */}
       <Card>
         <CardHeader>
-          <CardTitle>🚀 Checklist de configuração</CardTitle>
+          <CardTitle>Como a Casa Quest funciona no dia a dia</CardTitle>
         </CardHeader>
-        <div className="space-y-3">
-          <Step
-            number={1}
-            title="Configure sua família"
-            description="Nome, regras e tolerâncias"
-            done={!!family}
-            href="/dashboard/config"
-          />
-          <Step
-            number={2}
-            title="Adicione Guardiões"
-            description="Cadastre cada criança ou adolescente"
-            done={hasGuardians}
-            href="/dashboard/guardioes"
-          />
-          <Step
-            number={3}
-            title="Crie templates de ações"
-            description="Defina as responsabilidades diárias"
-            done={false}
-            href="/dashboard/acoes"
-          />
-          <Step
-            number={4}
-            title="Inicie uma Missão"
-            description="Defina o período e o valor-alvo da mesada"
-            done={hasMission}
-            href="/dashboard/missoes"
-          />
-        </div>
+        <ol className="grid gap-3 text-sm text-gray-600 sm:grid-cols-3">
+          <li className="rounded-lg bg-gray-50 p-3">
+            <p className="font-semibold text-gray-900">1. Cada guardião abre o seu link</p>
+            <p className="mt-1 text-xs">Sem senha. As ações do dia aparecem e ele marca &quot;Fiz!&quot;.</p>
+          </li>
+          <li className="rounded-lg bg-gray-50 p-3">
+            <p className="font-semibold text-gray-900">2. Você confirma em &quot;Hoje&quot;</p>
+            <p className="mt-1 text-xs">O que passou da tolerância vira falta sozinho. Você pode reverter.</p>
+          </li>
+          <li className="rounded-lg bg-gray-50 p-3">
+            <p className="font-semibold text-gray-900">3. A energia conta a história</p>
+            <p className="mt-1 text-xs">No fim da missão, a energia sugere a mesada. Só você vê o valor.</p>
+          </li>
+        </ol>
       </Card>
     </div>
   );
 }
 
-function StatCard({
-  title, value, icon, color, subtitle,
+function MissionCard({
+  mission,
+  today,
+  stats,
+  loading,
 }: {
-  title: string; value: string; icon: string; color: string; subtitle?: string;
+  mission: Mission;
+  today: string;
+  stats: { total: number; done: number; awaiting: number; missed: number };
+  loading: boolean;
 }) {
+  const total = Math.round((Date.parse(mission.end_at) - Date.parse(mission.start_at)) / 86_400_000) + 1;
+  const day = Math.min(total, Math.max(1, Math.round((Date.parse(today) - Date.parse(mission.start_at)) / 86_400_000) + 1));
+  const pct = Math.round((day / total) * 100);
+  const daysLeft = Math.max(0, total - day);
+
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4">
+    <Card>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-600">Missão em andamento</p>
+          <h2 className="text-lg font-bold text-gray-900">🎯 {mission.name}</h2>
+          <p className="text-xs text-gray-500">
+            {formatDate(mission.start_at)} a {formatDate(mission.end_at)} · dia {day} de {total}
+            {daysLeft === 0 ? ' · último dia' : ` · faltam ${daysLeft} dia${daysLeft === 1 ? '' : 's'}`}
+          </p>
+        </div>
+        <Link href="/dashboard/energia">
+          <Button size="sm" variant="secondary">⚡ Ver energia</Button>
+        </Link>
+      </div>
+      <div className="mt-3 h-2 rounded-full bg-gray-100">
+        <div className="h-2 rounded-full bg-indigo-500 transition-all" style={{ width: `${pct}%` }} />
+      </div>
+      {!loading && stats.total > 0 && (
+        <p className="mt-2 text-xs text-gray-500">
+          Hoje: {stats.done} feita{stats.done === 1 ? '' : 's'} de {stats.total}
+          {stats.awaiting > 0 && ` · ${stats.awaiting} aguardando confirmação`}
+          {stats.missed > 0 && ` · ${stats.missed} falta${stats.missed === 1 ? '' : 's'}`}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+function StatCard({
+  title, value, icon, tone, subtitle, href,
+}: {
+  title: string; value: string; icon: string; tone: string; subtitle?: string; href?: string;
+}) {
+  const body = (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 transition-colors hover:border-gray-300">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-gray-500">{title}</span>
-        <span className={`rounded-lg px-2 py-1 text-lg ${color}`}>{icon}</span>
+        <span className={`rounded-lg px-2 py-1 text-lg leading-none ${tone}`}>{icon}</span>
       </div>
       <p className="mt-2 text-2xl font-semibold text-gray-900">{value}</p>
       {subtitle && <p className="text-xs text-gray-400">{subtitle}</p>}
     </div>
   );
+  return href ? <Link href={href}>{body}</Link> : body;
 }
 
 function Step({
@@ -200,20 +288,20 @@ function Step({
   return (
     <Link
       href={href}
-      className="flex items-start gap-3 rounded-lg p-2 hover:bg-gray-50 transition-colors"
+      className="flex items-start gap-3 rounded-lg p-2 transition-colors hover:bg-gray-50"
     >
       <span
-        className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
+        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
           done ? 'bg-emerald-500 text-white' : 'bg-gray-200 text-gray-500'
         }`}
       >
         {done ? '✓' : number}
       </span>
-      <div>
+      <div className="min-w-0">
         <p className={`text-sm font-medium ${done ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
           {title}
         </p>
-        <p className="text-xs text-gray-500">{description}</p>
+        <p className="truncate text-xs text-gray-500">{description}</p>
       </div>
     </Link>
   );

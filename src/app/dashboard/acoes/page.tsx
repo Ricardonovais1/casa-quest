@@ -11,6 +11,7 @@ import { useFamily } from '@/hooks/use-family';
 import { getSupabaseBrowserClient } from '@/infrastructure/supabase/client';
 import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Notice } from '@/components/ui/page';
 import {
   ACTION_CATEGORY_META,
   DEFAULT_ACTION_CATALOG,
@@ -54,6 +55,7 @@ export default function ActionsPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<{ kind: 'success' | 'error' | 'warning'; text: string } | null>(null);
 
   // Form state
   const [name, setName] = useState('');
@@ -146,8 +148,9 @@ export default function ActionsPage() {
     }
 
     if (error) {
-      alert('Erro: ' + error.message);
+      setNotice({ kind: 'error', text: 'Não foi possível salvar: ' + error.message });
     } else {
+      setNotice({ kind: 'success', text: editingId ? 'Ação atualizada.' : 'Ação criada.' });
       resetForm();
       loadTemplates();
     }
@@ -212,14 +215,15 @@ export default function ActionsPage() {
     if (toInsert.length > 0) {
       const { error } = await supabase.from('action_templates').insert(toInsert);
       if (error) {
-        alert('Erro: ' + error.message);
+        setNotice({ kind: 'error', text: 'Não foi possível adicionar: ' + error.message });
       } else {
+        setNotice({ kind: 'success', text: `${toInsert.length} ação${toInsert.length === 1 ? '' : 'ões'} adicionada${toInsert.length === 1 ? '' : 's'}.` });
         setSelectedNames(new Set());
         setShowSuggestions(false);
         loadTemplates();
       }
     } else {
-      alert('Nenhuma ação nova selecionada (as marcadas já existem).');
+      setNotice({ kind: 'warning', text: 'Nenhuma ação nova selecionada: as marcadas já existem na sua família.' });
     }
     setAddingSuggestions(false);
   }
@@ -261,6 +265,8 @@ export default function ActionsPage() {
           </Button>
         </div>
       </div>
+
+      {notice && <Notice kind={notice.kind}>{notice.text}</Notice>}
 
       {/* Suggested actions */}
       {showSuggestions && (
