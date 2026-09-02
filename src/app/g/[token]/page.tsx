@@ -19,16 +19,22 @@ import {
   GuardianActionCard,
   type GuardianAction,
 } from '@/components/guardians/guardian-action-card';
+import { InstallPrompt } from '@/components/pwa/install-prompt';
 
 export const dynamic = 'force-dynamic';
 
-export const metadata: Metadata = {
-  title: 'Minhas ações de hoje',
-  robots: { index: false, follow: false },
-};
-
 interface GuardianPageProps {
   params: Promise<{ token: string }>;
+}
+
+export async function generateMetadata({ params }: GuardianPageProps): Promise<Metadata> {
+  const { token } = await params;
+  return {
+    title: 'Minhas ações de hoje',
+    robots: { index: false, follow: false },
+    // Installing from this page must reopen this page, not the landing.
+    manifest: `/api/manifest?start=${encodeURIComponent(`/g/${token}`)}`,
+  };
 }
 
 const EXTRA_CATEGORIES = ['tropecos', 'missoes', 'gentilezas', 'autoaperfeicoamento', 'rendimento_escolar'];
@@ -308,6 +314,8 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
             </ul>
           </section>
         )}
+
+        <InstallPrompt compact />
 
         <p className="px-2 pt-2 text-center text-[11px] text-gray-400">
           Casa Quest · este link é só seu, não compartilhe.

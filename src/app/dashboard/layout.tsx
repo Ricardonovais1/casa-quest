@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { SignOutButton } from '@/components/layout/signout-button';
 import { DashboardSidebar, DashboardMobileNav } from '@/components/layout/dashboard-nav';
 import { AuthGuardClient } from './auth-guard-client';
+import { InstallPrompt } from '@/components/pwa/install-prompt';
 
 export default function DashboardLayout({
   children,
@@ -39,7 +40,10 @@ export default function DashboardLayout({
 
         {/* Main content */}
         <main className="flex-1 pb-20 lg:pb-0">
-          <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 lg:px-8">{children}</div>
+          <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+            <InstallPrompt />
+            {children}
+          </div>
         </main>
       </div>
     </AuthGuardClient>

@@ -2,7 +2,8 @@
 
 // ============================================================
 // Casa Quest — Dashboard: Missões
-// Criar, iniciar, encerrar e cancelar missões (períodos de mesada).
+// Criar, editar, iniciar, encerrar e cancelar missões (períodos de
+// mesada). A mesada-alvo é da missão e pode ser ajustada por guardião.
 // ============================================================
 
 import { useState, useEffect, useCallback } from 'react';
@@ -24,9 +25,10 @@ interface Mission {
   created_at: string;
 }
 
-interface Result {
+interface MissionGuardianRow {
   mission_id: string;
   guardian_id: string;
+  target_reward: number | null;
   final_energy: number | null;
   final_reward: number | null;
 }
@@ -38,18 +40,23 @@ function suggestName(dateStr: string): string {
   return `Missão de ${MONTHS[month] ?? ''}`.trim();
 }
 
+function daysBetween(start: string, end: string): number {
+  return Math.round((Date.parse(end) - Date.parse(start)) / 86_400_000) + 1;
+}
+
 export default function MissionsPage() {
   const { family, guardians, loading: familyLoading } = useFamily();
   const [missions, setMissions] = useState<Mission[]>([]);
-  const [results, setResults] = useState<Result[]>([]);
+  const [mgRows, setMgRows] = useState<MissionGuardianRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
-  const [confirming, setConfirming] = useState<{ id: string; action: 'complete' | 'cancel' } | null>(null);
+  const [notice, setNotice] = useState<{ kind: 'success' | 'error' | 'warning'; text: string } | null>(null);
+  const [confirming, setConfirming] = useState<{ id: string; action: 'complete' | 'cancel' | 'replace'; activeName?: string } | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
-  // Form
+  // Create form
   const [name, setName] = useState('');
   const [startDate, setStartDate] = useState('');
   const [duration, setDuration] = useState(15);
@@ -58,6 +65,7 @@ export default function MissionsPage() {
   const supabase = getSupabaseBrowserClient();
   const tz = family?.timezone || 'America/Sao_Paulo';
   const today = localDateString(tz);
+  const kids = guardians.filter((g) => !g.is_mor && g.is_active);
 
   const loadMissions = useCallback(async () => {
     if (!family) return;
@@ -69,13 +77,12 @@ export default function MissionsPage() {
     const list = (data ?? []) as Mission[];
     setMissions(list);
 
-    const completed = list.filter((m) => m.status === 'completed').map((m) => m.id);
-    if (completed.length > 0) {
+    if (list.length > 0) {
       const { data: rows } = await supabase
         .from('mission_guardians')
-        .select('mission_id, guardian_id, final_energy, final_reward')
-        .in('mission_id', completed);
-      setResults((rows ?? []) as Result[]);
+        .select('mission_id, guardian_id, target_reward, final_energy, final_reward')
+        .in('mission_id', list.map((m) => m.id));
+      setMgRows((rows ?? []) as MissionGuardianRow[]);
     }
     setLoading(false);
   }, [family, supabase]);
@@ -85,6 +92,8 @@ export default function MissionsPage() {
     if (family) loadMissions();
   }, [family, loadMissions]);
 
+  const activeMission = missions.find((m) => m.status === 'active');
+
   function openForm() {
     const start = today;
     setName(suggestName(start));
@@ -92,6 +101,7 @@ export default function MissionsPage() {
     setDuration(family?.mission_duration_days || 15);
     setTargetReward('50');
     setNotice(null);
+    setEditingId(null);
     setShowForm(true);
   }
 
@@ -109,13 +119,18 @@ export default function MissionsPage() {
         name: name.trim(),
         startAt: `${startDate}T12:00:00.000Z`,
         endAt: `${endDate}T12:00:00.000Z`,
-        targetRewardAmount: parseFloat(targetReward) || 50,
+        targetRewardAmount: parseFloat(targetReward) || 0,
       }),
     });
 
     if (res.ok) {
       setShowForm(false);
-      setNotice({ kind: 'success', text: 'Missão criada como rascunho. Inicie quando estiver pronto.' });
+      setNotice({
+        kind: 'success',
+        text: activeMission
+          ? `Missão criada como rascunho. Ao iniciar, "${activeMission.name}" será encerrada.`
+          : 'Missão criada como rascunho. Inicie quando estiver pronto.',
+      });
       loadMissions();
     } else {
       const err = await res.json().catch(() => null);
@@ -124,27 +139,38 @@ export default function MissionsPage() {
     setSaving(false);
   }
 
-  async function lifecycle(id: string, action: 'activate' | 'complete' | 'cancel') {
+  async function patch(id: string, payload: Record<string, unknown>) {
+    const res = await fetch(`/api/missions/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = await res.json().catch(() => null);
+    return { ok: res.ok, status: res.status, body };
+  }
+
+  async function lifecycle(id: string, action: 'activate' | 'complete' | 'cancel', replaceActive = false) {
     setBusyId(id);
     setNotice(null);
     setConfirming(null);
     try {
-      const res = await fetch(`/api/missions/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      });
-      const body = await res.json().catch(() => null);
-      if (!res.ok) {
-        setNotice({ kind: 'error', text: body?.error?.message || 'Não foi possível atualizar a missão.' });
+      const { ok, status, body } = await patch(id, { action, replaceActive });
+      if (!ok) {
+        if (status === 409 && body?.error?.code === 'ALREADY_ACTIVE') {
+          // Ask before closing the current mission.
+          setConfirming({ id, action: 'replace', activeName: body.error.activeMission?.name });
+        } else {
+          setNotice({ kind: 'error', text: body?.error?.message || 'Não foi possível atualizar a missão.' });
+        }
       } else if (action === 'activate') {
         const generated = body?.data?.sync?.generated ?? 0;
+        const replaced = body?.data?.replaced ?? 0;
         setNotice({
           kind: 'success',
-          text: `Missão iniciada! ${generated > 0 ? `${generated} ações geradas para hoje.` : 'As ações de hoje aparecem no painel "Hoje".'}`,
+          text: `${replaced ? 'Missão anterior encerrada. ' : ''}Missão iniciada! ${generated > 0 ? `${generated} ações geradas para hoje.` : 'As ações de hoje aparecem no painel "Hoje".'}`,
         });
       } else if (action === 'complete') {
-        setNotice({ kind: 'success', text: 'Missão encerrada. Veja a mesada sugerida em Energia.' });
+        setNotice({ kind: 'success', text: 'Missão encerrada. Veja a mesada final em Energia.' });
       }
     } catch {
       setNotice({ kind: 'error', text: 'Sem conexão com o servidor.' });
@@ -153,10 +179,21 @@ export default function MissionsPage() {
     setBusyId(null);
   }
 
-  if (familyLoading || loading) return <PageSkeleton blocks={2} />;
+  async function handleEditSave(id: string, payload: Record<string, unknown>) {
+    setBusyId(id);
+    setNotice(null);
+    const { ok, body } = await patch(id, { action: 'update', ...payload });
+    if (!ok) {
+      setNotice({ kind: 'error', text: body?.error?.message || 'Não foi possível salvar.' });
+    } else {
+      setNotice({ kind: 'success', text: 'Missão atualizada.' });
+      setEditingId(null);
+    }
+    await loadMissions();
+    setBusyId(null);
+  }
 
-  const activeMission = missions.find((m) => m.status === 'active');
-  const kids = guardians.filter((g) => !g.is_mor);
+  if (familyLoading || loading) return <PageSkeleton blocks={2} />;
 
   return (
     <div className="space-y-6">
@@ -176,7 +213,10 @@ export default function MissionsPage() {
         <Card>
           <CardHeader>
             <CardTitle>Nova missão</CardTitle>
-            <CardDescription>Ela começa como rascunho. Só passa a gerar ações quando você iniciar.</CardDescription>
+            <CardDescription>
+              Ela começa como rascunho. Só passa a gerar ações quando você iniciar.
+              {activeMission && ` Iniciar esta encerra "${activeMission.name}".`}
+            </CardDescription>
           </CardHeader>
           <div className="space-y-3">
             <div>
@@ -223,9 +263,10 @@ export default function MissionsPage() {
                 placeholder="50.00"
                 step="0.01"
                 min="0"
+                inputMode="decimal"
               />
               <p className="mt-1 text-[11px] text-gray-400">
-                Os guardiões nunca veem este valor — só a energia deles.
+                Valor cheio para 90%+ de energia. Depois de criar, dá para ajustar por guardião em &quot;Editar&quot;. Os guardiões nunca veem este valor.
               </p>
             </div>
             {startDate && (
@@ -250,10 +291,15 @@ export default function MissionsPage() {
       ) : (
         <div className="space-y-3">
           {missions.map((m) => {
-            const total = Math.round((Date.parse(m.end_at) - Date.parse(m.start_at)) / 86_400_000) + 1;
-            const day = Math.min(total, Math.max(0, Math.round((Date.parse(today) - Date.parse(m.start_at)) / 86_400_000) + 1));
-            const myResults = results.filter((r) => r.mission_id === m.id);
+            const total = daysBetween(m.start_at, m.end_at);
+            const day = Math.min(total, Math.max(0, daysBetween(m.start_at, today)));
+            const myRows = mgRows.filter((r) => r.mission_id === m.id);
             const isConfirming = confirming?.id === m.id;
+            const isEditing = editingId === m.id;
+            const editable = m.status === 'draft' || m.status === 'active';
+            const customTargets = myRows.filter(
+              (r) => r.target_reward != null && Number(r.target_reward) !== Number(m.target_reward_amount)
+            );
 
             return (
               <Card key={m.id} className={cn(m.status === 'active' && 'border-emerald-200')}>
@@ -268,20 +314,32 @@ export default function MissionsPage() {
                       {m.status === 'active' && ` · dia ${day} de ${total}`}
                     </p>
                     <p className="mt-0.5 text-xs text-gray-400">
-                      Mesada-alvo: {formatCurrency(m.target_reward_amount)} por guardião
+                      Mesada-alvo: {formatCurrency(Number(m.target_reward_amount))} por guardião
+                      {customTargets.length > 0 && (
+                        <>
+                          {' · '}
+                          {customTargets.map((r) => {
+                            const g = kids.find((k) => k.id === r.guardian_id);
+                            return g ? `${g.name} ${formatCurrency(Number(r.target_reward))}` : null;
+                          }).filter(Boolean).join(', ')}
+                        </>
+                      )}
                     </p>
                   </div>
 
                   <div className="flex flex-wrap gap-1.5">
-                    {m.status === 'draft' && (
+                    {editable && !isEditing && (
+                      <Button size="sm" variant="secondary" onClick={() => { setEditingId(m.id); setConfirming(null); }}>
+                        ✏️ Editar
+                      </Button>
+                    )}
+                    {m.status === 'draft' && !isConfirming && (
                       <>
                         <Button
                           size="sm"
                           variant="auxilio"
                           onClick={() => lifecycle(m.id, 'activate')}
                           loading={busyId === m.id}
-                          disabled={!!activeMission}
-                          title={activeMission ? 'Encerre a missão em andamento antes' : undefined}
                         >
                           ▶ Iniciar
                         </Button>
@@ -298,7 +356,22 @@ export default function MissionsPage() {
                   </div>
                 </div>
 
-                {isConfirming && (
+                {isConfirming && confirming.action === 'replace' && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    <span className="flex-1">
+                      Já existe uma missão em andamento{confirming.activeName ? ` (“${confirming.activeName}”)` : ''}. Só uma roda por vez.
+                      Iniciar esta encerra a atual, calculando a energia final e a mesada dela. Continuar?
+                    </span>
+                    <Button size="sm" variant="auxilio" onClick={() => lifecycle(m.id, 'activate', true)} loading={busyId === m.id}>
+                      Encerrar a atual e iniciar esta
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
+                      Voltar
+                    </Button>
+                  </div>
+                )}
+
+                {isConfirming && confirming.action === 'complete' && (
                   <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
                     <span className="flex-1">
                       Encerrar calcula a energia final e a mesada sugerida. Não dá para reabrir. Continuar?
@@ -310,6 +383,17 @@ export default function MissionsPage() {
                       Voltar
                     </Button>
                   </div>
+                )}
+
+                {isEditing && (
+                  <MissionEditForm
+                    mission={m}
+                    rows={myRows}
+                    kids={kids}
+                    busy={busyId === m.id}
+                    onCancel={() => setEditingId(null)}
+                    onSave={(payload) => handleEditSave(m.id, payload)}
+                  />
                 )}
 
                 {m.status === 'active' && (
@@ -327,19 +411,20 @@ export default function MissionsPage() {
                   </div>
                 )}
 
-                {m.status === 'completed' && myResults.length > 0 && (
+                {m.status === 'completed' && myRows.length > 0 && (
                   <div className="mt-3 rounded-lg bg-gray-50 p-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Resultado</p>
                     <div className="mt-1 divide-y divide-gray-200">
-                      {myResults.map((r) => {
-                        const g = kids.find((k) => k.id === r.guardian_id);
-                        if (!g) return null;
+                      {myRows.map((r) => {
+                        const g = guardians.find((k) => k.id === r.guardian_id);
+                        if (!g || g.is_mor) return null;
                         return (
                           <div key={r.guardian_id} className="flex items-center justify-between py-1.5 text-sm">
                             <span className="text-gray-800">🦸 {g.name}</span>
                             <span className="text-xs text-gray-500">
                               energia {r.final_energy != null ? Math.round(Number(r.final_energy)) : '—'} ·{' '}
                               <strong className="text-gray-900">{r.final_reward != null ? formatCurrency(Number(r.final_reward)) : '—'}</strong>
+                              {r.target_reward != null && ` de ${formatCurrency(Number(r.target_reward))}`}
                             </span>
                           </div>
                         );
@@ -352,6 +437,135 @@ export default function MissionsPage() {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+function MissionEditForm({
+  mission,
+  rows,
+  kids,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  mission: Mission;
+  rows: MissionGuardianRow[];
+  kids: { id: string; name: string }[];
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (payload: Record<string, unknown>) => void;
+}) {
+  const isDraft = mission.status === 'draft';
+  const [name, setName] = useState(mission.name);
+  const [target, setTarget] = useState(String(mission.target_reward_amount));
+  const [startDate, setStartDate] = useState(mission.start_at);
+  const [duration, setDuration] = useState(daysBetween(mission.start_at, mission.end_at));
+  const [perGuardian, setPerGuardian] = useState<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    for (const k of kids) {
+      const row = rows.find((r) => r.guardian_id === k.id);
+      map[k.id] = row?.target_reward != null ? String(row.target_reward) : '';
+    }
+    return map;
+  });
+
+  function submit() {
+    const targetNumber = parseFloat(target);
+    const payload: Record<string, unknown> = {
+      name: name.trim(),
+      targetRewardAmount: Number.isFinite(targetNumber) ? targetNumber : 0,
+      guardianTargets: kids.map((k) => {
+        const raw = perGuardian[k.id]?.trim() ?? '';
+        const value = raw === '' ? null : parseFloat(raw);
+        return { guardianId: k.id, target: value != null && Number.isFinite(value) ? value : null };
+      }),
+    };
+    if (isDraft) {
+      payload.startAt = startDate;
+      payload.endAt = addDays(startDate, Math.max(1, duration) - 1);
+    }
+    onSave(payload);
+  }
+
+  return (
+    <div className="mt-3 space-y-3 rounded-lg border border-indigo-100 bg-indigo-50/40 p-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label className="text-xs font-medium text-gray-500">Nome</label>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} className={cn(inputClass, 'mt-1')} />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-gray-500">Mesada-alvo padrão (R$)</label>
+          <input
+            type="number"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            className={cn(inputClass, 'mt-1')}
+            step="0.01"
+            min="0"
+            inputMode="decimal"
+          />
+        </div>
+      </div>
+
+      {isDraft ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="text-xs font-medium text-gray-500">Início</label>
+            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={cn(inputClass, 'mt-1')} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-500">Duração (dias)</label>
+            <input
+              type="number"
+              value={duration}
+              onChange={(e) => setDuration(parseInt(e.target.value) || 1)}
+              className={cn(inputClass, 'mt-1')}
+              min="1"
+              max="90"
+            />
+            <p className="mt-1 text-[11px] text-gray-400">Termina em {formatDate(addDays(startDate, Math.max(1, duration) - 1))}.</p>
+          </div>
+        </div>
+      ) : (
+        <p className="text-[11px] text-gray-500">
+          O período não muda depois que a missão começou.
+        </p>
+      )}
+
+      {kids.length > 0 && (
+        <div>
+          <p className="text-xs font-medium text-gray-500">Mesada-alvo por guardião</p>
+          <p className="text-[11px] text-gray-400">Deixe em branco para usar o valor padrão da missão.</p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {kids.map((k) => (
+              <label key={k.id} className="flex items-center gap-2 text-sm text-gray-800">
+                <span className="w-28 truncate">🦸 {k.name}</span>
+                <input
+                  type="number"
+                  value={perGuardian[k.id] ?? ''}
+                  onChange={(e) => setPerGuardian((prev) => ({ ...prev, [k.id]: e.target.value }))}
+                  placeholder={target || '0'}
+                  className={cn(inputClass, 'flex-1')}
+                  step="0.01"
+                  min="0"
+                  inputMode="decimal"
+                />
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <Button size="sm" onClick={submit} loading={busy} disabled={!name.trim()}>
+          Salvar
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}>
+          Cancelar
+        </Button>
+      </div>
     </div>
   );
 }
