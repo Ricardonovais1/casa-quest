@@ -11,6 +11,7 @@
 import { NextResponse } from 'next/server';
 import { requireMor, apiError } from '@/lib/require-mor';
 import { settleMission, syncFamilyDay } from '@/lib/daily-actions';
+import { isChild } from '@/lib/roles';
 
 const ACTIONS = ['activate', 'complete', 'cancel', 'update'] as const;
 type Action = (typeof ACTIONS)[number];
@@ -51,14 +52,13 @@ export async function PATCH(
 
   if (!mission) return apiError('NOT_FOUND', 'Missão não encontrada', 404);
 
-  // Active, non-Mor guardians — used by activate and update.
-  const { data: guardians } = await db
+  // Active children — used by activate and update. Adults never join a mission.
+  const { data: allGuardians } = await db
     .from('guardians')
-    .select('id')
+    .select('*')
     .eq('family_id', mor.family_id)
-    .eq('is_mor', false)
     .eq('is_active', true);
-  const guardianIds = new Set((guardians ?? []).map((g) => g.id));
+  const guardianIds = new Set((allGuardians ?? []).filter(isChild).map((g) => g.id));
 
   // ── update ─────────────────────────────────────────────────
   if (action === 'update') {

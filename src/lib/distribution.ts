@@ -7,6 +7,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { distribute } from '@/domain/distribution/engine';
+import { isChild } from './roles';
 
 export interface AssignmentRow {
   id: string;
@@ -113,18 +114,18 @@ export async function ensureCurrentDistribution(
   }
 
   // Gather inputs
-  const [{ data: templates }, { data: guardians }, { data: family }] = await Promise.all([
+  const [{ data: templates }, { data: allGuardians }, { data: family }] = await Promise.all([
     supabase
       .from('action_templates')
       .select('id, name, points, frequency')
       .eq('family_id', familyId)
       .eq('category', 'cooperacao')
       .eq('is_active', true),
+    // Chores are shared among the children only, never the adults.
     supabase
       .from('guardians')
-      .select('id, name')
+      .select('*')
       .eq('family_id', familyId)
-      .eq('is_mor', false)
       .eq('is_active', true),
     supabase
       .from('families')
@@ -134,8 +135,9 @@ export async function ensureCurrentDistribution(
   ]);
 
   const intervalMonths = family?.rotation_interval_months ?? 1;
+  const guardians = (allGuardians ?? []).filter(isChild) as { id: string; name: string }[];
 
-  if (!templates || templates.length === 0 || !guardians || guardians.length === 0) {
+  if (!templates || templates.length === 0 || guardians.length === 0) {
     return { assignments: [], generated: false };
   }
 

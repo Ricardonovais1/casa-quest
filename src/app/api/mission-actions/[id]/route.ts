@@ -10,7 +10,7 @@
 // ============================================================
 
 import { NextResponse } from 'next/server';
-import { requireMor, apiError } from '@/lib/require-mor';
+import { requireAdult, apiError } from '@/lib/require-mor';
 
 const DECISIONS = ['confirm', 'reject', 'done', 'missed', 'reopen'] as const;
 type Decision = (typeof DECISIONS)[number];
@@ -19,9 +19,9 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const auth = await requireMor();
+  const auth = await requireAdult();
   if (!auth.ok) return auth.response;
-  const { db, mor } = auth.ctx;
+  const { db, me } = auth.ctx;
 
   const { id } = await params;
   const body = (await request.json().catch(() => null)) as { decision?: string } | null;
@@ -40,12 +40,13 @@ export async function PATCH(
   const rel = action?.missions as { family_id: string } | { family_id: string }[] | null | undefined;
   const familyId = Array.isArray(rel) ? rel[0]?.family_id : rel?.family_id;
 
-  if (!action || familyId !== mor.family_id) {
+  if (!action || familyId !== me.family_id) {
     return apiError('NOT_FOUND', 'Ação não encontrada', 404);
   }
 
   const now = new Date().toISOString();
   let update: Record<string, unknown>;
+  // Every decision is signed by the adult who made it ("confirmada por Marina").
   let confirmation: 'confirmed' | 'rejected' | null = null;
 
   switch (decision) {
@@ -65,10 +66,12 @@ export async function PATCH(
       break;
     case 'done':
       update = { status: 'confirmed', completed_at: now, missed_at: null, confirmation_status: 'not_required' };
+      confirmation = 'confirmed';
       break;
     case 'missed': {
       const missedAt = Date.parse(action.due_at) < Date.now() ? action.due_at : now;
       update = { status: 'missed', completed_at: null, missed_at: missedAt, confirmation_status: 'not_required' };
+      confirmation = 'rejected';
       break;
     }
     case 'reopen':
@@ -85,9 +88,12 @@ export async function PATCH(
     await db
       .from('action_confirmations')
       .upsert(
-        { mission_action_id: id, guardian_id: mor.id, decision: confirmation },
+        { mission_action_id: id, guardian_id: me.id, decision: confirmation },
         { onConflict: 'mission_action_id,guardian_id' }
       );
+  } else {
+    // Reopened: the previous decision no longer stands.
+    await db.from('action_confirmations').delete().eq('mission_action_id', id);
   }
 
   return NextResponse.json({ data: { id, status: update.status } });

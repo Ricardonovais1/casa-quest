@@ -7,21 +7,22 @@
 // ============================================================
 
 import { NextResponse } from 'next/server';
-import { requireMor, apiError } from '@/lib/require-mor';
+import { requireAdult, apiError } from '@/lib/require-mor';
+import { isChild } from '@/lib/roles';
 import { getGuardianEnergy } from '@/lib/guardian-energy';
 import { calculateReward } from '@/domain/reward/calculator';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const auth = await requireMor();
+  const auth = await requireAdult();
   if (!auth.ok) return auth.response;
-  const { db, mor } = auth.ctx;
+  const { db, me, canSeeMoney } = auth.ctx;
 
   const { data: mission } = await db
     .from('missions')
     .select('id, name, start_at, end_at, status, target_reward_amount')
-    .eq('family_id', mor.family_id)
+    .eq('family_id', me.family_id)
     .in('status', ['active', 'completed'])
     .order('status', { ascending: true }) // 'active' < 'completed'
     .order('start_at', { ascending: false })
@@ -29,15 +30,15 @@ export async function GET() {
     .maybeSingle();
 
   if (!mission) {
-    return NextResponse.json({ data: { mission: null, guardians: [] } });
+    return NextResponse.json({ data: { mission: null, guardians: [], canSeeMoney } });
   }
 
-  const { data: guardians } = await db
+  const { data: allGuardians } = await db
     .from('guardians')
-    .select('id, name, age, is_active')
-    .eq('family_id', mor.family_id)
-    .eq('is_mor', false)
+    .select('*')
+    .eq('family_id', me.family_id)
     .order('name');
+  const guardians = (allGuardians ?? []).filter(isChild);
 
   const { data: mgRows } = await db
     .from('mission_guardians')
@@ -55,7 +56,7 @@ export async function GET() {
         db,
         g.id,
         mission.id,
-        mor.family_id,
+        me.family_id,
         new Date(`${mission.start_at}T12:00:00Z`)
       );
       const target = Number(mg.target_reward ?? mission.target_reward_amount ?? 0);
@@ -69,19 +70,22 @@ export async function GET() {
       results.push({
         guardian: { id: g.id, name: g.name, age: g.age, isActive: g.is_active },
         energy,
-        reward: {
-          target,
-          tierPercent: reward.tier.rewardPercent,
-          base: reward.baseReward,
-          cooperationBonus: reward.cooperationBonus,
-          total: reward.totalReward,
-          finalRecorded: mg.final_reward,
-        },
+        // Mesada é assunto de quem gerencia; conselheiros veem só se a família permitir.
+        reward: canSeeMoney
+          ? {
+              target,
+              tierPercent: reward.tier.rewardPercent,
+              base: reward.baseReward,
+              cooperationBonus: reward.cooperationBonus,
+              total: reward.totalReward,
+              finalRecorded: mg.final_reward,
+            }
+          : null,
       });
     } catch (e) {
       return apiError('INTERNAL', e instanceof Error ? e.message : 'Erro ao calcular energia', 500);
     }
   }
 
-  return NextResponse.json({ data: { mission, guardians: results } });
+  return NextResponse.json({ data: { mission, guardians: results, canSeeMoney } });
 }

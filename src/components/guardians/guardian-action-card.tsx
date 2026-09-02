@@ -128,7 +128,7 @@ export function GuardianActionCard({
 
       {waiting && (
         <p className="mt-2 text-xs text-amber-700">
-          Você marcou como feita. Falta o Guardião-Mor confirmar.
+          Você marcou como feita. Falta um adulto da casa confirmar.
         </p>
       )}
 

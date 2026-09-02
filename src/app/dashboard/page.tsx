@@ -24,7 +24,7 @@ interface Mission {
 }
 
 export default function DashboardPage() {
-  const { family, guardians, morGuardian, loading, error } = useFamily();
+  const { family, kids, me, canManage, loading, error } = useFamily();
   const [mission, setMission] = useState<Mission | null>(null);
   const [today, setToday] = useState({ total: 0, done: 0, awaiting: 0, missed: 0 });
   const [templateCount, setTemplateCount] = useState<number | null>(null);
@@ -101,7 +101,6 @@ export default function DashboardPage() {
     );
   }
 
-  const kids = guardians.filter((g) => !g.is_mor);
   const activeKids = kids.filter((g) => g.is_active);
   const kidsWithLink = activeKids.filter((g) => !!g.access_token);
   const tz = family.timezone || 'America/Sao_Paulo';
@@ -142,7 +141,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={`Olá, ${morGuardian?.name?.split(' ')[0] || 'Guardião-Mor'}!`}
+        title={`Olá, ${me?.name?.split(' ')[0] || 'Guardião-Mor'}!`}
         subtitle={friendlyDate(date)}
         actions={
           <Link href="/dashboard/hoje">
@@ -179,7 +178,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Setup checklist */}
-      {!allDone && (
+      {!allDone && canManage && (
         <Card>
           <CardHeader>
             <CardTitle>🚀 Primeiros passos</CardTitle>

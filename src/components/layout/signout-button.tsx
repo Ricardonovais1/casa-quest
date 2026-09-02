@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { getSupabaseBrowserClient } from '@/infrastructure/supabase/client';
+import { resetFamilyCache } from '@/hooks/use-family';
 
 export function SignOutButton() {
   const router = useRouter();
@@ -9,6 +10,7 @@ export function SignOutButton() {
   async function handleSignOut() {
     const supabase = getSupabaseBrowserClient();
     await supabase.auth.signOut();
+    resetFamilyCache();
     router.push('/login');
     router.refresh();
   }

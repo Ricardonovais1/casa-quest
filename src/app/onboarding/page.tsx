@@ -10,6 +10,7 @@ import { useRouter } from 'next/navigation';
 import { getSupabaseBrowserClient } from '@/infrastructure/supabase/client';
 import { seedDefaultActions } from '@/lib/default-actions';
 import { inputClass } from '@/components/ui/page';
+import { GenderSelect, type GenderValue } from '@/components/ui/gender-select';
 
 type Step =
   | 'welcome'
@@ -36,6 +37,7 @@ export default function OnboardingPage() {
   const [familyName, setFamilyName] = useState('');
   const [participantCount, setParticipantCount] = useState(2);
   const [morName, setMorName] = useState('');
+  const [morGender, setMorGender] = useState<GenderValue>(null);
   const [guardianNames, setGuardianNames] = useState<string[]>(['']);
   const [confirmation, setConfirmation] = useState<'none' | 'one'>('one');
   const [tolerance, setTolerance] = useState(30);
@@ -59,13 +61,20 @@ export default function OnboardingPage() {
         router.replace('/login?redirect=%2Fonboarding');
         return;
       }
-      const { data: mor } = await supabase
+      const { data: mine } = await supabase
         .from('guardians')
         .select('id')
         .eq('user_id', user.id)
-        .eq('is_mor', true)
-        .maybeSingle();
-      if (mor) {
+        .limit(1);
+      let member = (mine?.length ?? 0) > 0;
+      if (!member) {
+        // Invited as Conselheiro(a) by e-mail? Then there is no family to create.
+        const claim = await fetch('/api/auth/claim', { method: 'POST' })
+          .then((r) => r.json())
+          .catch(() => null);
+        member = !!claim?.data?.member;
+      }
+      if (member) {
         router.replace('/dashboard');
         return;
       }
@@ -117,16 +126,21 @@ export default function OnboardingPage() {
       return;
     }
 
-    // 2. Create Mor guardian
-    const { error: morError } = await supabase
+    // 2. Create Mor guardian. gender/role only exist after migration 00008,
+    //    so retry without them if the columns are missing.
+    const morRow = {
+      family_id: family.id,
+      name: morName.trim() || user.user_metadata?.full_name || 'Guardião-Mor',
+      is_mor: true,
+      email: user.email,
+      user_id: user.id,
+    };
+    let { error: morError } = await supabase
       .from('guardians')
-      .insert({
-        family_id: family.id,
-        name: morName.trim() || user.user_metadata?.full_name || 'Guardião-Mor',
-        is_mor: true,
-        email: user.email,
-        user_id: user.id,
-      });
+      .insert({ ...morRow, role: 'mor', gender: morGender });
+    if (morError && /column/i.test(morError.message)) {
+      ({ error: morError } = await supabase.from('guardians').insert(morRow));
+    }
 
     if (morError) {
       await supabase.from('families').delete().eq('id', family.id);
@@ -240,6 +254,11 @@ export default function OnboardingPage() {
               className={`${inputClass} py-3 text-lg`}
               autoFocus
             />
+            <p className="mb-2 mt-4 text-sm text-gray-500">Como te chamamos?</p>
+            <GenderSelect value={morGender} onChange={setMorGender} labels={{ f: 'Guardiã-Mor', m: 'Guardião-Mor' }} />
+            <p className="mt-3 text-xs text-gray-400">
+              Outro adulto na casa? Depois de criar a família, convide em “Família” como Conselheiro(a).
+            </p>
           </div>
         );
 
@@ -415,7 +434,7 @@ export default function OnboardingPage() {
             </p>
             <div className="mt-4 space-y-2 text-sm">
               <SummaryRow label="Família" value={familyName} />
-              <SummaryRow label="Guardião-Mor" value={morName} />
+              <SummaryRow label={morGender === 'f' ? 'Guardiã-Mor' : 'Guardião-Mor'} value={morName} />
               <SummaryRow label="Guardiões" value={guardianNames.filter((n) => n.trim()).join(', ') || 'Nenhum'} />
               <SummaryRow label="Confirmação" value={confirmation === 'one' ? 'Você confirma' : 'Sem confirmação'} />
               <SummaryRow label="Tolerância" value={`${tolerance} min`} />

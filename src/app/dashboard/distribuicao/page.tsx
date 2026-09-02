@@ -26,7 +26,7 @@ interface CollabTemplate {
 }
 
 export default function DistributionPage() {
-  const { family, guardians, loading: familyLoading } = useFamily();
+  const { family, kids, canManage, loading: familyLoading } = useFamily();
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -37,7 +37,7 @@ export default function DistributionPage() {
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
 
   const supabase = getSupabaseBrowserClient();
-  const nonMorGuardians = guardians.filter((g) => !g.is_mor && g.is_active);
+  const nonMorGuardians = kids.filter((g) => g.is_active);
 
   const load = useCallback(async () => {
     if (!family) return;
@@ -158,6 +158,7 @@ export default function DistributionPage() {
             : 'As atividades de colaboração são divididas por pontos e rodam a cada período.'
         }
         actions={
+          canManage ? (
           <>
             {!manualMode && (
               <Button variant="secondary" onClick={enterManual} disabled={nonMorGuardians.length === 0}>
@@ -168,8 +169,13 @@ export default function DistributionPage() {
               🔄 Sortear de novo
             </Button>
           </>
+          ) : undefined
         }
       />
+
+      {!canManage && (
+        <Notice kind="info">Só o Guardião-Mor sorteia ou ajusta a distribuição. Aqui você acompanha a rodada vigente.</Notice>
+      )}
 
       {notice && <Notice kind={notice.kind}>{notice.text}</Notice>}
 
@@ -185,6 +191,7 @@ export default function DistributionPage() {
           {ROTATION_INTERVAL_OPTIONS.map((n) => (
             <button
               key={n}
+              disabled={!canManage}
               onClick={() => handleIntervalChange(n)}
               className={cn(
                 'rounded-lg px-5 py-2 text-sm font-semibold transition-colors',

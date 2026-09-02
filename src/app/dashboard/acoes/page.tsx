@@ -49,7 +49,7 @@ function normalizeConfirmation(mode: string): string {
 }
 
 export default function ActionsPage() {
-  const { family, loading: familyLoading } = useFamily();
+  const { family, canManage, loading: familyLoading } = useFamily();
   const [templates, setTemplates] = useState<ActionTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -256,15 +256,21 @@ export default function ActionsPage() {
             {templates.length} ação{templates.length !== 1 ? 'ões' : ''} cadastrada{templates.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="secondary" onClick={() => setShowSuggestions((v) => !v)}>
-            {showSuggestions ? 'Fechar sugeridas' : '✨ Ações sugeridas'}
-          </Button>
-          <Button onClick={showForm ? resetForm : openCreate}>
-            {showForm ? 'Cancelar' : '+ Nova Ação'}
-          </Button>
-        </div>
+        {canManage && (
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => setShowSuggestions((v) => !v)}>
+              {showSuggestions ? 'Fechar sugeridas' : '✨ Ações sugeridas'}
+            </Button>
+            <Button onClick={showForm ? resetForm : openCreate}>
+              {showForm ? 'Cancelar' : '+ Nova Ação'}
+            </Button>
+          </div>
+        )}
       </div>
+
+      {!canManage && (
+        <Notice kind="info">O catálogo de ações é definido pelo Guardião-Mor. Aqui você consulta o que vale na casa.</Notice>
+      )}
 
       {notice && <Notice kind={notice.kind}>{notice.text}</Notice>}
 
@@ -466,6 +472,7 @@ export default function ActionsPage() {
                   template={t}
                   onToggle={handleToggle}
                   onEdit={openEdit}
+                  readOnly={!canManage}
                 />
               ))}
             </div>
@@ -481,7 +488,7 @@ export default function ActionsPage() {
           </CardHeader>
           <div className="divide-y divide-gray-100">
             {grouped.others.map((t) => (
-              <TemplateRow key={t.id} template={t} onToggle={handleToggle} onEdit={openEdit} />
+              <TemplateRow key={t.id} template={t} onToggle={handleToggle} onEdit={openEdit} readOnly={!canManage} />
             ))}
           </div>
         </Card>
@@ -506,10 +513,12 @@ function TemplateRow({
   template,
   onToggle,
   onEdit,
+  readOnly = false,
 }: {
   template: ActionTemplate;
   onToggle: (id: string, active: boolean) => void;
   onEdit: (t: ActionTemplate) => void;
+  readOnly?: boolean;
 }) {
   const cat = categoryMeta(template.category);
   const modeLabel = CONFIRMATION_MODES.find(
@@ -542,15 +551,18 @@ function TemplateRow({
         >
           {formatPoints(template.points)}
         </span>
+        {!readOnly && (
+          <button
+            onClick={() => onEdit(template)}
+            className="rounded-lg px-2 py-1 text-xs text-gray-500 hover:bg-gray-100"
+            title="Editar"
+          >
+            ✏️
+          </button>
+        )}
         <button
-          onClick={() => onEdit(template)}
-          className="rounded-lg px-2 py-1 text-xs text-gray-500 hover:bg-gray-100"
-          title="Editar"
-        >
-          ✏️
-        </button>
-        <button
-          onClick={() => onToggle(template.id, template.is_active)}
+          onClick={() => !readOnly && onToggle(template.id, template.is_active)}
+          disabled={readOnly}
           className={`text-[10px] font-medium ${
             template.is_active ? 'text-emerald-600' : 'text-gray-400'
           }`}

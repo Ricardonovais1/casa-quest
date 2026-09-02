@@ -11,18 +11,19 @@
 // ============================================================
 
 import { NextResponse } from 'next/server';
-import { requireMor, apiError } from '@/lib/require-mor';
+import { requireAdult, apiError } from '@/lib/require-mor';
 import {
   ensureCurrentDistribution,
   computePeriod,
   getCurrentAssignments,
 } from '@/lib/distribution';
 import { ROTATION_INTERVAL_OPTIONS } from '@/lib/constants';
+import { isChild } from '@/lib/roles';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const auth = await requireMor();
+  const auth = await requireAdult();
   if (!auth.ok) return auth.response;
   const { db, mor } = auth.ctx;
 
@@ -43,7 +44,7 @@ interface IntervalBody {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireMor();
+  const auth = await requireAdult({ manage: true });
   if (!auth.ok) return auth.response;
   const { db, mor } = auth.ctx;
 
@@ -84,14 +85,13 @@ export async function POST(request: Request) {
         .eq('is_active', true),
       db
         .from('guardians')
-        .select('id')
+        .select('*')
         .eq('family_id', mor.family_id)
-        .eq('is_mor', false)
         .eq('is_active', true),
       db.from('families').select('rotation_interval_months').eq('id', mor.family_id).single(),
     ]);
     const templateIds = new Set((templates ?? []).map((t) => t.id));
-    const guardianIds = new Set((guardians ?? []).map((g) => g.id));
+    const guardianIds = new Set((guardians ?? []).filter(isChild).map((g) => g.id));
 
     const rows = wanted.filter((a) => templateIds.has(a.templateId) && guardianIds.has(a.guardianId));
     const { validFrom, validUntil } = computePeriod(family?.rotation_interval_months ?? 1);

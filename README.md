@@ -3,7 +3,8 @@
 > Responsabilidade não se compra. Se cultiva.
 
 App para famílias com crianças e adolescentes. O adulto (**Guardião-Mor**) monta a casa: cadastra os
-**Guardiões**, escolhe as ações (hábitos, colaboração, tropeços, missões extras, escaladas) e cria
+**Guardiões**, convida os outros adultos como **Conselheiros** (confirmam ações, registram tropeços e extras,
+acompanham a energia; decidem regras e mesada só com "poderes iguais"), escolhe as ações (hábitos, colaboração, tropeços, missões extras, escaladas) e cria
 **missões** (períodos com mesada-alvo). Cada guardião recebe um **link próprio** (sem senha), vê as ações
 do dia e marca "Fiz!". Faltas, constância, recuperação e escalada viram uma **energia de compromisso**
 que, no fim da missão, sugere a mesada. Os guardiões nunca veem dinheiro.
@@ -37,7 +38,7 @@ Migrações em `supabase/migrations/`, em ordem. Para aplicar:
 
 ```bash
 # com um personal access token do Supabase (Account → Access Tokens)
-SUPABASE_TOKEN=sbp_xxx node scripts/apply-migration.mjs 00006 00007
+SUPABASE_TOKEN=sbp_xxx node scripts/apply-migration.mjs 00006 00007 00008
 # ou cole o SQL no SQL Editor do painel do Supabase
 ```
 
@@ -46,6 +47,7 @@ SUPABASE_TOKEN=sbp_xxx node scripts/apply-migration.mjs 00006 00007
 | 00001–00005 | Esquema inicial, categorias, pontos, distribuição, token do guardião |
 | 00006 | Índice único da geração diária (idempotência), índice de status, frequência padrão |
 | 00007 | **RLS completo** — cada família só enxerga os próprios dados. Obrigatória antes de abrir para outras famílias. |
+| 00008 | **Papéis** — Conselheiro(a), gênero para rótulos, "poderes iguais", mesada visível a conselheiros, políticas por papel. Requer a 00007. |
 
 ## Como o dia funciona
 
@@ -64,8 +66,8 @@ cron da Vercel (`/api/cron/daily`, protegido por `CRON_SECRET`).
 ## Configuração do Supabase (Auth)
 
 - **Site URL**: `https://casaquest.fun`
-- **Redirect URLs**: `https://casaquest.fun/api/auth/callback`, `https://*.vercel.app/api/auth/callback`,
-  `http://localhost:3000/api/auth/callback`
+- **Redirect URLs**: `https://www.casaquest.fun/**`, `https://casaquest.fun/**`, `https://*.vercel.app/**`,
+  `http://localhost:3000/**` (cobre `/api/auth/callback` e `/convite`)
 - Confirmação de e-mail está ligada: o signup mostra "confira seu e-mail" e o link leva ao onboarding.
 - Para receber várias famílias, configure um **SMTP próprio** (Auth → SMTP). O SMTP embutido do Supabase
   limita a poucos e-mails por hora.

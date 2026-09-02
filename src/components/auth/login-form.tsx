@@ -48,15 +48,21 @@ export function LoginForm() {
         return;
       }
 
-      // First login without a family yet → onboarding.
-      const { data: mor } = await supabase
+      // Member of a family (Mor or Conselheiro)? Invited by e-mail? Otherwise → onboarding.
+      const { data: mine } = await supabase
         .from('guardians')
         .select('id')
         .eq('user_id', data.user.id)
-        .eq('is_mor', true)
-        .maybeSingle();
+        .limit(1);
+      let member = (mine?.length ?? 0) > 0;
+      if (!member) {
+        const claim = await fetch('/api/auth/claim', { method: 'POST' })
+          .then((r) => r.json())
+          .catch(() => null);
+        member = !!claim?.data?.member;
+      }
 
-      const target = !mor ? '/onboarding' : redirect || '/dashboard';
+      const target = !member ? '/onboarding' : redirect || '/dashboard';
       router.push(target);
       router.refresh();
     } catch {

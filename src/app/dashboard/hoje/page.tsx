@@ -89,13 +89,15 @@ function flattenTemplate(rel: unknown): { name: string; category: string; points
 }
 
 export default function TodayPage() {
-  const { family, guardians, loading: familyLoading, error: familyError } = useFamily();
+  const { family, guardians, kids: allKids, loading: familyLoading, error: familyError } = useFamily();
   const supabase = getSupabaseBrowserClient();
 
   const [mission, setMission] = useState<Mission | null>(null);
   const [actions, setActions] = useState<TodayAction[]>([]);
   const [awaiting, setAwaiting] = useState<TodayAction[]>([]);
   const [templates, setTemplates] = useState<ExtraTemplate[]>([]);
+  /** action id → first name of the adult who decided */
+  const [decidedBy, setDecidedBy] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -108,7 +110,7 @@ export default function TodayPage() {
   const [extraBusy, setExtraBusy] = useState(false);
 
   const tz = family?.timezone || 'America/Sao_Paulo';
-  const kids = useMemo(() => guardians.filter((g) => !g.is_mor && g.is_active), [guardians]);
+  const kids = useMemo(() => allKids.filter((g) => g.is_active), [allKids]);
 
   const load = useCallback(async () => {
     if (!family) return;
@@ -162,6 +164,23 @@ export default function TodayPage() {
         a.due_at.localeCompare(b.due_at) || a.name.localeCompare(b.name, 'pt-BR');
       setActions((rows ?? []).map(map).sort(byDueThenName));
       setAwaiting((waiting ?? []).map(map).sort(byDueThenName));
+
+      // Who confirmed / rejected each action ("por Marina").
+      const ids = (rows ?? []).map((r) => r.id);
+      if (ids.length > 0) {
+        const { data: confs } = await supabase
+          .from('action_confirmations')
+          .select('mission_action_id, guardian_id')
+          .in('mission_action_id', ids);
+        const byId: Record<string, string> = {};
+        for (const c of confs ?? []) {
+          const who = guardians.find((g) => g.id === c.guardian_id);
+          if (who) byId[c.mission_action_id] = who.name.split(' ')[0]!;
+        }
+        setDecidedBy(byId);
+      } else {
+        setDecidedBy({});
+      }
     } else {
       setActions([]);
       setAwaiting([]);
@@ -177,7 +196,7 @@ export default function TodayPage() {
     setTemplates((extras ?? []) as ExtraTemplate[]);
 
     setLoading(false);
-  }, [family, supabase, tz]);
+  }, [family, supabase, tz, guardians]);
 
   const sync = useCallback(async () => {
     setSyncing(true);
@@ -410,6 +429,7 @@ export default function TodayPage() {
                         action={a}
                         tz={tz}
                         busy={busyId === a.id}
+                        decidedBy={decidedBy[a.id]}
                         onDecide={(d) => decide(a.id, d)}
                       />
                     ))}
@@ -521,11 +541,13 @@ function ActionRow({
   action,
   tz,
   busy,
+  decidedBy,
   onDecide,
 }: {
   action: TodayAction;
   tz: string;
   busy: boolean;
+  decidedBy?: string;
   onDecide: (d: 'confirm' | 'reject' | 'done' | 'missed' | 'reopen') => void;
 }) {
   const cat = categoryMeta(action.category);
@@ -545,6 +567,7 @@ function ActionRow({
             {isExtra ? `${cat?.label ?? 'Extra'} · registrada ${localTimeString(tz, action.due_at)}` : `até ${localTimeString(tz, action.due_at)}`}
             {action.escalada_points_earned ? ` · +${action.escalada_points_earned} energia` : ''}
             {action.recovers_action_id ? ' · compensa uma falta' : ''}
+            {decidedBy && (action.status === 'confirmed' || action.status === 'missed') ? ` · por ${decidedBy}` : ''}
           </p>
         </div>
       </div>

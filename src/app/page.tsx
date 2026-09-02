@@ -63,7 +63,7 @@ export default function HomePage() {
         <div className="mx-auto max-w-5xl px-4 sm:px-6">
           <h2 className="text-center text-2xl font-bold text-gray-900">Como funciona</h2>
           <p className="mx-auto mt-2 max-w-lg text-center text-sm text-gray-500">
-            Um adulto é o Guardião-Mor. Cada criança ou adolescente é um Guardião.
+            Um adulto é o Guardião-Mor; os outros adultos entram como Conselheiros. Cada criança ou adolescente é um Guardião.
           </p>
 
           <ol className="mt-10 grid gap-6 sm:grid-cols-3">

@@ -8,7 +8,8 @@
 // ============================================================
 
 import { NextResponse } from 'next/server';
-import { requireMor, apiError } from '@/lib/require-mor';
+import { requireAdult, apiError } from '@/lib/require-mor';
+import { isChild } from '@/lib/roles';
 
 const KINDS = ['tropeco', 'recovery', 'escalada'] as const;
 type Kind = (typeof KINDS)[number];
@@ -20,9 +21,9 @@ const KIND_CATEGORIES: Record<Kind, string[]> = {
 };
 
 export async function POST(request: Request) {
-  const auth = await requireMor();
+  const auth = await requireAdult();
   if (!auth.ok) return auth.response;
-  const { db, mor } = auth.ctx;
+  const { db, me } = auth.ctx;
 
   const body = (await request.json().catch(() => null)) as
     | { guardianId?: string; templateId?: string; kind?: string }
@@ -36,28 +37,27 @@ export async function POST(request: Request) {
   const [{ data: guardian }, { data: template }, { data: mission }] = await Promise.all([
     db
       .from('guardians')
-      .select('id')
+      .select('*')
       .eq('id', body.guardianId)
-      .eq('family_id', mor.family_id)
-      .eq('is_mor', false)
+      .eq('family_id', me.family_id)
       .maybeSingle(),
     db
       .from('action_templates')
       .select('id, category, points, escalada_base_points, name')
       .eq('id', body.templateId)
-      .eq('family_id', mor.family_id)
+      .eq('family_id', me.family_id)
       .maybeSingle(),
     db
       .from('missions')
       .select('id')
-      .eq('family_id', mor.family_id)
+      .eq('family_id', me.family_id)
       .eq('status', 'active')
       .order('start_at', { ascending: false })
       .limit(1)
       .maybeSingle(),
   ]);
 
-  if (!guardian) return apiError('NOT_FOUND', 'Guardião não encontrado', 404);
+  if (!guardian || !isChild(guardian)) return apiError('NOT_FOUND', 'Guardião não encontrado', 404);
   if (!template) return apiError('NOT_FOUND', 'Ação não encontrada', 404);
   if (!mission) {
     return apiError('NO_MISSION', 'Inicie uma missão antes de registrar eventos', 422);

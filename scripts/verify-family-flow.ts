@@ -316,6 +316,59 @@ async function main() {
   const { data: finals } = await admin.from('mission_guardians').select('final_energy, final_reward').eq('mission_id', mission!.id);
   check('energia e mesada finais gravadas', (finals ?? []).every((f) => f.final_energy != null && f.final_reward != null), finals);
 
+  // ── Papéis: Conselheiro(a) (migração 00008) ──
+  section('Papéis (migração 00008)');
+  const { error: roleColErr } = await admin.from('guardians').select('role').limit(1);
+  if (roleColErr) {
+    check('coluna role existe (aplique a migração 00008 para conselheiros)', false, roleColErr.message);
+  } else {
+    check('coluna role existe', true);
+    const advisorEmail = `verify-advisor-${stamp}@casaquest.fun`;
+    const { data: advisorUser } = await admin.auth.admin.createUser({
+      email: advisorEmail,
+      password,
+      email_confirm: true,
+      user_metadata: { full_name: 'Conselheira Teste' },
+    });
+    const { data: advisorRow, error: advErr } = await admin
+      .from('guardians')
+      .insert({ family_id: familyId, name: 'Conselheira Teste', email: advisorEmail, role: 'conselheiro', gender: 'f', is_mor: false })
+      .select('id, role, is_mor')
+      .single();
+    check('conselheira criada com is_mor=false (trigger coerente)', !advErr && advisorRow?.role === 'conselheiro' && advisorRow?.is_mor === false, advErr?.message ?? advisorRow);
+
+    // Claim by e-mail (o que /api/auth/claim faz)
+    if (advisorUser?.user && advisorRow) {
+      await admin.from('guardians').update({ user_id: advisorUser.user.id }).eq('id', advisorRow.id);
+      const advisorClient = createClient(URL_, ANON, { auth: { persistSession: false, autoRefreshToken: false } });
+      const { error: advLogin } = await advisorClient.auth.signInWithPassword({ email: advisorEmail, password });
+      check('conselheira faz login', !advLogin, advLogin?.message);
+
+      const { data: roleRpc } = await advisorClient.rpc('auth_role');
+      check('auth_role() devolve conselheiro', roleRpc === 'conselheiro', roleRpc);
+      const { data: manageRpc } = await advisorClient.rpc('auth_can_manage');
+      check('auth_can_manage() é false sem poderes iguais', manageRpc === false, manageRpc);
+
+      const { data: famSeen } = await advisorClient.from('families').select('id').eq('id', familyId);
+      check('conselheira lê a própria família', (famSeen?.length ?? 0) === 1);
+
+      // Adulto do dia a dia: pode escrever em mission_actions; não pode mudar regras.
+      const { error: ruleErr, count: ruleCount } = await advisorClient
+        .from('families')
+        .update({ tolerance_minutes: 99 }, { count: 'exact' })
+        .eq('id', familyId);
+      const { data: famAfter } = await admin.from('families').select('tolerance_minutes').eq('id', familyId).single();
+      check('conselheira NÃO altera regras (RLS)', famAfter?.tolerance_minutes !== 99, { ruleErr: ruleErr?.message, ruleCount });
+
+      await admin.from('families').update({ equal_powers: true }).eq('id', familyId);
+      const { data: manageRpc2 } = await advisorClient.rpc('auth_can_manage');
+      check('com poderes iguais, auth_can_manage() é true', manageRpc2 === true, manageRpc2);
+      await admin.from('families').update({ equal_powers: false }).eq('id', familyId);
+
+      await admin.auth.admin.deleteUser(advisorUser.user.id);
+    }
+  }
+
   // ── Isolamento entre famílias (só faz sentido com RLS ligado) ──
   section('Isolamento (RLS)');
   const { data: otherFamilies } = await client.from('families').select('id');

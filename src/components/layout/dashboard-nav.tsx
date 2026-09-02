@@ -1,27 +1,30 @@
 'use client';
 
 // ============================================================
-// Casa Quest — Dashboard navigation (Mor)
+// Casa Quest — Dashboard navigation
 // Sidebar on desktop, bottom bar on mobile with a "Mais" sheet so
-// every section is reachable from a phone.
+// every section is reachable from a phone. Sections that only the
+// Guardião-Mor manages are hidden from Conselheiros.
 // ============================================================
 
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { useFamily } from '@/hooks/use-family';
+import { roleLabel } from '@/lib/roles';
 import { SignOutButton } from './signout-button';
 
 export const NAVIGATION = [
-  { name: 'Hoje', href: '/dashboard/hoje', icon: '☀️', hint: 'Confirmar e acompanhar o dia' },
-  { name: 'Visão geral', href: '/dashboard', icon: '🏠', hint: 'Resumo e primeiros passos' },
-  { name: 'Família', href: '/dashboard/familia', icon: '👨‍👩‍👧‍👦', hint: 'Membros e links de acesso' },
-  { name: 'Guardiões', href: '/dashboard/guardioes', icon: '🦸', hint: 'Cadastro das crianças' },
-  { name: 'Ações', href: '/dashboard/acoes', icon: '✅', hint: 'Hábitos, colaboração e extras' },
-  { name: 'Distribuição', href: '/dashboard/distribuicao', icon: '🎲', hint: 'Quem faz o quê no período' },
-  { name: 'Missões', href: '/dashboard/missoes', icon: '🎯', hint: 'Períodos e mesada-alvo' },
-  { name: 'Energia', href: '/dashboard/energia', icon: '⚡', hint: 'Compromisso de cada guardião' },
-  { name: 'Configurações', href: '/dashboard/config', icon: '⚙️', hint: 'Regras da casa' },
+  { name: 'Hoje', href: '/dashboard/hoje', icon: '☀️', manage: false },
+  { name: 'Visão geral', href: '/dashboard', icon: '🏠', manage: false },
+  { name: 'Família', href: '/dashboard/familia', icon: '👨‍👩‍👧‍👦', manage: false },
+  { name: 'Guardiões', href: '/dashboard/guardioes', icon: '🦸', manage: true },
+  { name: 'Ações', href: '/dashboard/acoes', icon: '✅', manage: true },
+  { name: 'Distribuição', href: '/dashboard/distribuicao', icon: '🎲', manage: true },
+  { name: 'Missões', href: '/dashboard/missoes', icon: '🎯', manage: false },
+  { name: 'Energia', href: '/dashboard/energia', icon: '⚡', manage: false },
+  { name: 'Configurações', href: '/dashboard/config', icon: '⚙️', manage: false },
 ] as const;
 
 const MOBILE_PRIMARY = ['/dashboard/hoje', '/dashboard', '/dashboard/familia', '/dashboard/missoes'];
@@ -31,39 +34,57 @@ function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+function useVisibleNavigation() {
+  const { canManage, loading } = useFamily();
+  // While loading, assume the full menu so the layout does not jump for the Mor.
+  return NAVIGATION.filter((n) => !n.manage || canManage || loading);
+}
+
 export function DashboardSidebar() {
   const pathname = usePathname();
+  const items = useVisibleNavigation();
+  const { me, family } = useFamily();
   return (
-    <nav className="flex-1 space-y-0.5 px-3 py-4">
-      {NAVIGATION.map((item) => {
-        const active = isActive(pathname, item.href);
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            aria-current={active ? 'page' : undefined}
-            className={cn(
-              'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-              active
-                ? 'bg-indigo-50 text-indigo-700'
-                : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-            )}
-          >
-            <span className="text-lg leading-none">{item.icon}</span>
-            {item.name}
-          </Link>
-        );
-      })}
-    </nav>
+    <>
+      <nav className="flex-1 space-y-0.5 px-3 py-4">
+        {items.map((item) => {
+          const active = isActive(pathname, item.href);
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              aria-current={active ? 'page' : undefined}
+              className={cn(
+                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                active
+                  ? 'bg-indigo-50 text-indigo-700'
+                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+              )}
+            >
+              <span className="text-lg leading-none">{item.icon}</span>
+              {item.name}
+            </Link>
+          );
+        })}
+      </nav>
+      {me && (
+        <div className="px-4 pb-2 text-xs text-gray-500">
+          <p className="truncate font-semibold text-gray-800">{me.name}</p>
+          <p className="truncate">{roleLabel(me)}{family ? ` · ${family.name}` : ''}</p>
+        </div>
+      )}
+    </>
   );
 }
 
 export function DashboardMobileNav() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const items = useVisibleNavigation();
+  const { me } = useFamily();
 
-  const primary = NAVIGATION.filter((n) => MOBILE_PRIMARY.includes(n.href));
-  const secondary = NAVIGATION.filter((n) => !MOBILE_PRIMARY.includes(n.href));
+  const primary = items.filter((n) => MOBILE_PRIMARY.includes(n.href));
+  const secondary = items.filter((n) => !MOBILE_PRIMARY.includes(n.href));
   const moreActive = secondary.some((n) => isActive(pathname, n.href));
 
   return (
@@ -99,7 +120,10 @@ export function DashboardMobileNav() {
               </Link>
             ))}
           </div>
-          <div className="mt-3 flex justify-end px-2">
+          <div className="mt-3 flex items-center justify-between px-2">
+            <span className="truncate text-xs text-gray-500">
+              {me ? `${me.name} · ${roleLabel(me)}` : ''}
+            </span>
             <SignOutButton />
           </div>
         </div>

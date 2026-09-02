@@ -21,6 +21,7 @@ import {
   weekdayInTz,
 } from './day-range';
 import { isScheduledOn } from './scheduling';
+import { isChild } from './roles';
 import { ensureCurrentDistribution } from './distribution';
 import { getGuardianEnergy } from './guardian-energy';
 import { calculateReward } from '@/domain/reward/calculator';
@@ -65,12 +66,13 @@ export async function ensureDailyActions(
   const { date, startUtc, endUtc } = localDayRangeUtc(tz, now);
   const weekday = weekdayInTz(tz, now);
 
-  const [{ data: guardians }, { data: templates }, { assignments }] = await Promise.all([
+  const [{ data: allGuardians }, { data: templates }, { assignments }] = await Promise.all([
+    // select('*') + isChild(): adults (Mor, Conselheiros) never get daily actions,
+    // and this keeps working before migration 00008 adds the role column.
     supabase
       .from('guardians')
-      .select('id')
+      .select('*')
       .eq('family_id', family.id)
-      .eq('is_mor', false)
       .eq('is_active', true),
     supabase
       .from('action_templates')
@@ -81,7 +83,8 @@ export async function ensureDailyActions(
     ensureCurrentDistribution(supabase, family.id),
   ]);
 
-  if (!guardians?.length || !templates?.length) return 0;
+  const guardians = (allGuardians ?? []).filter(isChild);
+  if (!guardians.length || !templates?.length) return 0;
 
   const assignedTo = new Map<string, string>();
   for (const a of assignments) assignedTo.set(a.action_template_id, a.guardian_id);

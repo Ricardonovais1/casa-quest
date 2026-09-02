@@ -7,15 +7,15 @@
 // ============================================================
 
 import { NextResponse } from 'next/server';
-import { requireMor, apiError } from '@/lib/require-mor';
+import { requireAdult, apiError } from '@/lib/require-mor';
 import { syncFamilyDay } from '@/lib/daily-actions';
 
 export async function POST() {
-  const auth = await requireMor();
+  const auth = await requireAdult();
   if (!auth.ok) return auth.response;
 
   try {
-    const summary = await syncFamilyDay(auth.ctx.db, auth.ctx.mor.family_id);
+    const summary = await syncFamilyDay(auth.ctx.db, auth.ctx.me.family_id);
     return NextResponse.json({ data: summary });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro ao sincronizar o dia';

@@ -14,6 +14,7 @@ import { getGuardianEnergy } from '@/lib/guardian-energy';
 import { syncFamilyDay, missDeadline } from '@/lib/daily-actions';
 import { describeSchedule } from '@/lib/scheduling';
 import { categoryMeta } from '@/lib/default-actions';
+import { isAdult } from '@/lib/roles';
 import { formatDate } from '@/lib/utils';
 import {
   GuardianActionCard,
@@ -70,7 +71,7 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
   // and record yesterday's misses if the cron has not run yet.
   await syncFamilyDay(supabase, guardian.family_id, now).catch(() => null);
 
-  const [{ data: familyRow }, { data: mor }, { assignments }] = await Promise.all([
+  const [{ data: familyRow }, { data: members }, { assignments }] = await Promise.all([
     supabase
       .from('families')
       .select('name, timezone, tolerance_minutes, recovery_enabled, auxilio_enabled, escalada_enabled')
@@ -78,17 +79,23 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
       .single(),
     supabase
       .from('guardians')
-      .select('name')
+      .select('*')
       .eq('family_id', guardian.family_id)
-      .eq('is_mor', true)
-      .limit(1)
-      .maybeSingle(),
+      .eq('is_active', true)
+      .order('is_mor', { ascending: false }),
     ensureCurrentDistribution(supabase, guardian.family_id),
   ]);
 
   const tz = familyRow?.timezone || 'America/Sao_Paulo';
   const tolerance = familyRow?.tolerance_minutes ?? 30;
-  const morName = mor?.name?.split(' ')[0] || 'Guardião-Mor';
+  // The adults of the house — who the child should tell about extras.
+  const adultNames = (members ?? []).filter(isAdult).map((a) => a.name.split(' ')[0]);
+  const morName =
+    adultNames.length === 0
+      ? 'um adulto da casa'
+      : adultNames.length === 1
+        ? adultNames[0]!
+        : `${adultNames.slice(0, -1).join(', ')} ou ${adultNames[adultNames.length - 1]}`;
 
   const myAssignments = assignments.filter((a) => a.guardian_id === guardian.id);
   const periodUntil = assignments[0]?.valid_until ?? null;

@@ -45,7 +45,7 @@ function daysBetween(start: string, end: string): number {
 }
 
 export default function MissionsPage() {
-  const { family, guardians, loading: familyLoading } = useFamily();
+  const { family, kids: allKids, canManage, canSeeMoney, loading: familyLoading } = useFamily();
   const [missions, setMissions] = useState<Mission[]>([]);
   const [mgRows, setMgRows] = useState<MissionGuardianRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,7 +65,7 @@ export default function MissionsPage() {
   const supabase = getSupabaseBrowserClient();
   const tz = family?.timezone || 'America/Sao_Paulo';
   const today = localDateString(tz);
-  const kids = guardians.filter((g) => !g.is_mor && g.is_active);
+  const kids = allKids.filter((g) => g.is_active);
 
   const loadMissions = useCallback(async () => {
     if (!family) return;
@@ -201,11 +201,19 @@ export default function MissionsPage() {
         title="Missões"
         subtitle="Uma missão é um período com mesada-alvo. A energia de cada guardião define quanto da mesada ele recebe."
         actions={
-          <Button onClick={showForm ? () => setShowForm(false) : openForm}>
-            {showForm ? 'Cancelar' : '+ Nova missão'}
-          </Button>
+          canManage ? (
+            <Button onClick={showForm ? () => setShowForm(false) : openForm}>
+              {showForm ? 'Cancelar' : '+ Nova missão'}
+            </Button>
+          ) : undefined
         }
       />
+
+      {!canManage && (
+        <Notice kind="info">
+          Missões e mesada são decididas pelo Guardião-Mor. Você acompanha por aqui e pelo painel Hoje.
+        </Notice>
+      )}
 
       {notice && <Notice kind={notice.kind}>{notice.text}</Notice>}
 
@@ -313,6 +321,7 @@ export default function MissionsPage() {
                       {formatDate(m.start_at)} a {formatDate(m.end_at)} · {total} dias
                       {m.status === 'active' && ` · dia ${day} de ${total}`}
                     </p>
+                    {canSeeMoney && (
                     <p className="mt-0.5 text-xs text-gray-400">
                       Mesada-alvo: {formatCurrency(Number(m.target_reward_amount))} por guardião
                       {customTargets.length > 0 && (
@@ -325,15 +334,16 @@ export default function MissionsPage() {
                         </>
                       )}
                     </p>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap gap-1.5">
-                    {editable && !isEditing && (
+                    {canManage && editable && !isEditing && (
                       <Button size="sm" variant="secondary" onClick={() => { setEditingId(m.id); setConfirming(null); }}>
                         ✏️ Editar
                       </Button>
                     )}
-                    {m.status === 'draft' && !isConfirming && (
+                    {canManage && m.status === 'draft' && !isConfirming && (
                       <>
                         <Button
                           size="sm"
@@ -348,7 +358,7 @@ export default function MissionsPage() {
                         </Button>
                       </>
                     )}
-                    {m.status === 'active' && !isConfirming && (
+                    {canManage && m.status === 'active' && !isConfirming && (
                       <Button size="sm" variant="secondary" onClick={() => setConfirming({ id: m.id, action: 'complete' })}>
                         Encerrar agora
                       </Button>
@@ -416,15 +426,20 @@ export default function MissionsPage() {
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Resultado</p>
                     <div className="mt-1 divide-y divide-gray-200">
                       {myRows.map((r) => {
-                        const g = guardians.find((k) => k.id === r.guardian_id);
-                        if (!g || g.is_mor) return null;
+                        const g = allKids.find((k) => k.id === r.guardian_id);
+                        if (!g) return null;
                         return (
                           <div key={r.guardian_id} className="flex items-center justify-between py-1.5 text-sm">
                             <span className="text-gray-800">🦸 {g.name}</span>
                             <span className="text-xs text-gray-500">
-                              energia {r.final_energy != null ? Math.round(Number(r.final_energy)) : '—'} ·{' '}
-                              <strong className="text-gray-900">{r.final_reward != null ? formatCurrency(Number(r.final_reward)) : '—'}</strong>
-                              {r.target_reward != null && ` de ${formatCurrency(Number(r.target_reward))}`}
+                              energia {r.final_energy != null ? Math.round(Number(r.final_energy)) : '—'}
+                              {canSeeMoney && (
+                                <>
+                                  {' · '}
+                                  <strong className="text-gray-900">{r.final_reward != null ? formatCurrency(Number(r.final_reward)) : '—'}</strong>
+                                  {r.target_reward != null && ` de ${formatCurrency(Number(r.target_reward))}`}
+                                </>
+                              )}
                             </span>
                           </div>
                         );

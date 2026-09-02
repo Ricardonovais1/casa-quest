@@ -1,11 +1,13 @@
 // ============================================================
 // Casa Quest — API: Guardian Access Link
-// GET  /api/guardians/[id]/token  → devolve o link atual (se houver)
-// POST /api/guardians/[id]/token  → gera/regenera o link
+// POST   /api/guardians/[id]/token  → gera/regenera o link
+// DELETE /api/guardians/[id]/token  → revoga o link
+//
+// Só quem gerencia a casa (Mor, ou Conselheiro com poderes iguais).
 // ============================================================
 
 import { NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/infrastructure/supabase/server';
+import { requireAdult, apiError } from '@/lib/require-mor';
 
 const TOKEN_TTL_DAYS = 90;
 
@@ -36,62 +38,30 @@ function getBaseUrl(request: Request): string {
 }
 
 async function sha256Hex(value: string): Promise<string> {
-  const hashBuffer = await crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(value)
-  );
+  const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return Array.from(new Uint8Array(hashBuffer))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 }
 
-function fail(code: string, message: string, status: number) {
-  return NextResponse.json({ error: { code, message } }, { status });
-}
+/** The target must be a child (link access) of the caller's family. */
+async function loadTarget(id: string) {
+  const auth = await requireAdult({ manage: true });
+  if (!auth.ok) return { error: auth.response };
+  const { db, me } = auth.ctx;
 
-/**
- * Ensure the caller is the Guardião-Mor of the target guardian's family.
- * Returns the target guardian row, or a ready-to-return error response.
- */
-async function authorizeMor(id: string) {
-  const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { error: fail('UNAUTHORIZED', 'Não autenticado', 401) };
-  }
-
-  const { data: targetGuardian } = await supabase
+  const { data: target } = await db
     .from('guardians')
-    .select('id, family_id, name')
+    .select('id, family_id, name, is_mor, user_id')
     .eq('id', id)
-    .single();
+    .eq('family_id', me.family_id)
+    .maybeSingle();
 
-  if (!targetGuardian) {
-    return { error: fail('NOT_FOUND', 'Guardião não encontrado', 404) };
+  if (!target) return { error: apiError('NOT_FOUND', 'Guardião não encontrado', 404) };
+  if (target.is_mor || target.user_id) {
+    return { error: apiError('INVALID_TARGET', 'Adultos entram com e-mail e senha, não por link', 422) };
   }
-
-  const { data: morGuardian } = await supabase
-    .from('guardians')
-    .select('id')
-    .eq('user_id', user.id)
-    .eq('family_id', targetGuardian.family_id)
-    .eq('is_mor', true)
-    .single();
-
-  if (!morGuardian) {
-    return {
-      error: fail(
-        'FORBIDDEN',
-        'Apenas o Guardião-Mor pode gerenciar links de acesso',
-        403
-      ),
-    };
-  }
-
-  return { supabase, guardian: targetGuardian };
+  return { db, target };
 }
 
 export async function POST(
@@ -100,10 +70,9 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const auth = await authorizeMor(id);
-    if (auth.error) return auth.error;
-
-    const { supabase } = auth;
+    const loaded = await loadTarget(id);
+    if (loaded.error) return loaded.error;
+    const { db } = loaded;
 
     const token = crypto.randomUUID();
     const tokenHash = await sha256Hex(token);
@@ -112,8 +81,8 @@ export async function POST(
     expiresAt.setDate(expiresAt.getDate() + TOKEN_TTL_DAYS);
 
     // Store the hash (used for the indexed /g/[token] lookup) plus the plain
-    // token, so the Mor can reopen and reshare the link at any time.
-    const { error: updateError } = await supabase
+    // token, so the family can reopen and reshare the link at any time.
+    const { error: updateError } = await db
       .from('guardians')
       .update({
         access_token: token,
@@ -123,7 +92,7 @@ export async function POST(
       .eq('id', id);
 
     if (updateError) {
-      return fail('DB_ERROR', `Não foi possível salvar o link: ${updateError.message}`, 500);
+      return apiError('DB_ERROR', `Não foi possível salvar o link: ${updateError.message}`, 500);
     }
 
     return NextResponse.json({
@@ -134,36 +103,31 @@ export async function POST(
       },
     });
   } catch {
-    return fail('INTERNAL', 'Erro interno', 500);
+    return apiError('INTERNAL', 'Erro interno', 500);
   }
 }
 
 export async function DELETE(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const auth = await authorizeMor(id);
-    if (auth.error) return auth.error;
+    const loaded = await loadTarget(id);
+    if (loaded.error) return loaded.error;
+    const { db } = loaded;
 
-    const { supabase } = auth;
-
-    const { error: updateError } = await supabase
+    const { error: updateError } = await db
       .from('guardians')
-      .update({
-        access_token: null,
-        access_token_hash: null,
-        token_expires_at: null,
-      })
+      .update({ access_token: null, access_token_hash: null, token_expires_at: null })
       .eq('id', id);
 
     if (updateError) {
-      return fail('DB_ERROR', `Não foi possível revogar o link: ${updateError.message}`, 500);
+      return apiError('DB_ERROR', `Não foi possível revogar o link: ${updateError.message}`, 500);
     }
 
     return NextResponse.json({ data: { accessLink: null, revoked: true } });
   } catch {
-    return fail('INTERNAL', 'Erro interno', 500);
+    return apiError('INTERNAL', 'Erro interno', 500);
   }
 }

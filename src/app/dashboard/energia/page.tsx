@@ -34,8 +34,9 @@ interface Summary {
       cooperationBonus: number;
       total: number;
       finalRecorded: number | null;
-    };
+    } | null;
   }[];
+  canSeeMoney?: boolean;
 }
 
 export default function EnergyPage() {
@@ -126,7 +127,8 @@ export default function EnergyPage() {
                 </div>
               </div>
 
-              {/* Mor-only: reward preview */}
+              {/* Money is for whoever manages (and advisors, if the family allows) */}
+              {reward && (
               <div className="mt-4 rounded-lg bg-indigo-50 px-3 py-2.5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold text-indigo-900">
@@ -139,9 +141,10 @@ export default function EnergyPage() {
                 <p className="mt-0.5 text-[11px] text-indigo-700">
                   {reward.tierPercent}% de {formatCurrency(reward.target)}
                   {reward.cooperationBonus > 0 ? ` + ${formatCurrency(reward.cooperationBonus)} de cooperação` : ''}
-                  {' · '}só você vê este valor
+                  {' · '}os guardiões nunca veem este valor
                 </p>
               </div>
+              )}
             </Card>
           ))}
         </div>
