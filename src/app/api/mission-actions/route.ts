@@ -9,6 +9,7 @@
 
 import { NextResponse } from 'next/server';
 import { requireAdult, apiError } from '@/lib/require-mor';
+import { notifyFamilyChanged } from '@/lib/realtime';
 import { isChild } from '@/lib/roles';
 
 const KINDS = ['tropeco', 'recovery', 'escalada'] as const;
@@ -117,6 +118,8 @@ export async function POST(request: Request) {
 
   const { data, error } = await db.from('mission_actions').insert(row).select('id').single();
   if (error) return apiError('DB_ERROR', error.message, 500);
+
+  await notifyFamilyChanged(me.family_id, 'actions');
 
   return NextResponse.json({ data: { id: data.id, kind, name: template.name } }, { status: 201 });
 }

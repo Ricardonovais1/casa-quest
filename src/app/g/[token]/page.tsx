@@ -21,6 +21,8 @@ import {
   type GuardianAction,
 } from '@/components/guardians/guardian-action-card';
 import { InstallPrompt } from '@/components/pwa/install-prompt';
+import { LiveRefresh } from '@/components/realtime/live-refresh';
+import { familyChannelName } from '@/lib/realtime';
 
 export const dynamic = 'force-dynamic';
 
@@ -194,6 +196,9 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
 
   return (
     <main className="min-h-screen bg-gray-50 pb-16">
+      {/* Mudou a distribuição ou um adulto decidiu algo? A tela se atualiza. */}
+      <LiveRefresh channel={familyChannelName(guardian.family_id)} />
+
       {/* Header */}
       <header className="bg-gradient-to-br from-indigo-600 to-purple-600 px-4 pb-8 pt-6 text-white">
         <div className="mx-auto max-w-md">

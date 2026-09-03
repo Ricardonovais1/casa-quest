@@ -11,6 +11,9 @@ export const APP_DESCRIPTION =
 export const APP_URL =
   process.env.NEXT_PUBLIC_APP_URL || 'https://app.casaquest.com';
 
+/** Tempo real: evento de broadcast que avisa "algo mudou nesta família" */
+export const FAMILY_CHANGED_EVENT = 'family-changed';
+
 /** Energy system */
 export const DEFAULT_INITIAL_ENERGY = 100;
 export const DEFAULT_RECOVERY_VALUE = 2;

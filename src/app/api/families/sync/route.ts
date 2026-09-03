@@ -9,6 +9,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdult, apiError } from '@/lib/require-mor';
 import { syncFamilyDay } from '@/lib/daily-actions';
+import { notifyFamilyChanged } from '@/lib/realtime';
 
 export async function POST() {
   const auth = await requireAdult();
@@ -16,6 +17,10 @@ export async function POST() {
 
   try {
     const summary = await syncFamilyDay(auth.ctx.db, auth.ctx.me.family_id);
+    // O dia mudou: quem está com o link aberto vê na hora.
+    if (summary.generated + summary.realigned + summary.missed > 0) {
+      await notifyFamilyChanged(auth.ctx.me.family_id, 'day');
+    }
     return NextResponse.json({ data: summary });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro ao sincronizar o dia';

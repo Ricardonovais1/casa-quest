@@ -32,6 +32,8 @@ export interface SyncSummary {
   missionId: string | null;
   missionStatus: 'none' | 'not_started' | 'active' | 'settled';
   generated: number;
+  /** Ações do dia que mudaram de dono (ou sumiram) porque a distribuição mudou. */
+  realigned: number;
   missed: number;
 }
 
@@ -52,16 +54,114 @@ interface MissionRow {
 /** Categories that turn into concrete daily actions. */
 const DAILY_CATEGORIES = ['habitos', 'cooperacao'] as const;
 
+export interface DayActionRow {
+  id: string;
+  guardian_id: string;
+  action_template_id: string;
+  due_at: string;
+  status: string;
+}
+
+export interface RealignmentPlan {
+  /** Ações pendentes que passam para o novo dono da atividade. */
+  move: { id: string; guardianId: string }[];
+  /** Ações pendentes que somem: ninguém está com a atividade agora. */
+  drop: string[];
+}
+
 /**
- * Generate today's `mission_actions` for every active guardian.
- * Returns how many rows were inserted (0 when the day is already complete).
+ * A distribuição pode mudar no meio do período — o Mor ajusta na mão ou
+ * sorteia de novo. O que já está no dia precisa acompanhar:
+ *
+ *   • só mexe no que ainda está pendente — o que já foi feito, marcado ou
+ *     virou falta é história do guardião que estava com a atividade;
+ *   • só mexe nas atividades distribuídas (colaboração); hábito é de todos;
+ *   • se o novo dono já tem aquela linha no dia, a antiga sai em vez de
+ *     virar duplicata (a mesma tarefa apareceria para os dois);
+ *   • se a atividade ficou sem dono, a linha pendente sai.
+ *
+ * Pura: devolve o plano, quem chama aplica.
+ */
+export function planRealignment(
+  rows: DayActionRow[],
+  assignedTo: Map<string, string>,
+  sharedTemplateIds: Set<string>,
+  activeGuardianIds: Set<string>
+): RealignmentPlan {
+  const plan: RealignmentPlan = { move: [], drop: [] };
+  const slot = (guardianId: string, templateId: string, dueAt: string) =>
+    `${guardianId}|${templateId}|${dueAt}`;
+
+  // Quem já ocupa cada (guardião, atividade, horário) hoje — incluindo o que
+  // já foi feito ou virou falta, que continua ocupando o lugar.
+  const taken = new Set(rows.map((r) => slot(r.guardian_id, r.action_template_id, r.due_at)));
+
+  for (const row of rows) {
+    if (row.status !== 'pending') continue;
+    if (!sharedTemplateIds.has(row.action_template_id)) continue;
+
+    const owner = assignedTo.get(row.action_template_id);
+    if (owner === row.guardian_id) continue;
+
+    if (!owner || !activeGuardianIds.has(owner)) {
+      plan.drop.push(row.id);
+      continue;
+    }
+
+    const target = slot(owner, row.action_template_id, row.due_at);
+    if (taken.has(target)) {
+      plan.drop.push(row.id);
+      continue;
+    }
+
+    taken.delete(slot(row.guardian_id, row.action_template_id, row.due_at));
+    taken.add(target);
+    plan.move.push({ id: row.id, guardianId: owner });
+  }
+
+  return plan;
+}
+
+/** Aplica o plano. Devolve quantas linhas mudaram. */
+async function applyRealignment(
+  supabase: SupabaseClient,
+  plan: RealignmentPlan
+): Promise<number> {
+  let changed = 0;
+
+  for (const m of plan.move) {
+    const { error } = await supabase
+      .from('mission_actions')
+      .update({ guardian_id: m.guardianId })
+      .eq('id', m.id)
+      // Se o guardião marcou "Fiz!" no meio da troca, a ação é dele.
+      .eq('status', 'pending');
+    if (!error) changed++;
+  }
+
+  if (plan.drop.length > 0) {
+    const { error } = await supabase
+      .from('mission_actions')
+      .delete()
+      .in('id', plan.drop)
+      .eq('status', 'pending');
+    if (!error) changed += plan.drop.length;
+  }
+
+  return changed;
+}
+
+/**
+ * Generate today's `mission_actions` for every active guardian, and keep the
+ * day in sync with the current distribution.
+ * Returns how many rows were inserted and how many changed hands.
  */
 export async function ensureDailyActions(
   supabase: SupabaseClient,
   family: FamilyRow,
   mission: MissionRow,
   now: Date = new Date()
-): Promise<number> {
+): Promise<{ generated: number; realigned: number }> {
   const tz = family.timezone || 'America/Sao_Paulo';
   const { date, startUtc, endUtc } = localDayRangeUtc(tz, now);
   const weekday = weekdayInTz(tz, now);
@@ -84,7 +184,7 @@ export async function ensureDailyActions(
   ]);
 
   const guardians = (allGuardians ?? []).filter(isChild);
-  if (!guardians.length || !templates?.length) return 0;
+  if (!guardians.length || !templates?.length) return { generated: 0, realigned: 0 };
 
   const assignedTo = new Map<string, string>();
   for (const a of assignments) assignedTo.set(a.action_template_id, a.guardian_id);
@@ -108,20 +208,38 @@ export async function ensureDailyActions(
     }
   }
 
-  if (planned.length === 0) return 0;
-
   // What already exists today
   const { data: existing } = await supabase
     .from('mission_actions')
-    .select('guardian_id, action_template_id')
+    .select('id, guardian_id, action_template_id, due_at, status')
     .eq('mission_id', mission.id)
     .gte('due_at', startUtc)
     .lt('due_at', endUtc);
 
-  const have = new Set((existing ?? []).map((e) => `${e.guardian_id}|${e.action_template_id}`));
+  // A distribuição pode ter mudado depois que o dia foi gerado: o que ainda
+  // está pendente troca de dono antes de qualquer coisa, senão a tarefa
+  // apareceria para o antigo e para o novo guardião ao mesmo tempo.
+  const rows = (existing ?? []) as DayActionRow[];
+  const plan = planRealignment(
+    rows,
+    assignedTo,
+    new Set(templates.filter((t) => t.category === 'cooperacao').map((t) => t.id)),
+    new Set(guardians.map((g) => g.id))
+  );
+  const realigned = await applyRealignment(supabase, plan);
+
+  if (planned.length === 0) return { generated: 0, realigned };
+
+  const dropped = new Set(plan.drop);
+  const moved = new Map(plan.move.map((m) => [m.id, m.guardianId]));
+  const have = new Set(
+    rows
+      .filter((e) => !dropped.has(e.id))
+      .map((e) => `${moved.get(e.id) ?? e.guardian_id}|${e.action_template_id}`)
+  );
   const missing = planned.filter((p) => !have.has(`${p.guardian_id}|${p.action_template_id}`));
 
-  if (missing.length === 0) return 0;
+  if (missing.length === 0) return { generated: 0, realigned };
 
   const { error } = await supabase.from('mission_actions').insert(
     missing.map((m) => ({
@@ -140,7 +258,7 @@ export async function ensureDailyActions(
     throw new Error(`Falha ao gerar ações do dia: ${error.message}`);
   }
 
-  return error ? 0 : missing.length;
+  return { generated: error ? 0 : missing.length, realigned };
 }
 
 /** Minimum window a guardian gets when an action was generated late. */
@@ -269,6 +387,7 @@ export async function syncFamilyDay(
     missionId: null,
     missionStatus: 'none',
     generated: 0,
+    realigned: 0,
     missed: 0,
   };
 
@@ -305,7 +424,9 @@ export async function syncFamilyDay(
   }
 
   base.missionStatus = 'active';
-  base.generated = await ensureDailyActions(supabase, family, mission, now);
+  const day = await ensureDailyActions(supabase, family, mission, now);
+  base.generated = day.generated;
+  base.realigned = day.realigned;
   base.missed = await sweepOverdueActions(
     supabase,
     mission.id,

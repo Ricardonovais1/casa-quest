@@ -12,6 +12,7 @@ import { NextResponse } from 'next/server';
 import { requireMor, apiError } from '@/lib/require-mor';
 import { settleMission, syncFamilyDay } from '@/lib/daily-actions';
 import { isChild } from '@/lib/roles';
+import { notifyFamilyChanged } from '@/lib/realtime';
 
 const ACTIONS = ['activate', 'complete', 'cancel', 'update'] as const;
 type Action = (typeof ACTIONS)[number];
@@ -208,6 +209,7 @@ export async function PATCH(
     if (error) return apiError('DB_ERROR', error.message, 500);
 
     const summary = await syncFamilyDay(db, mor.family_id);
+    await notifyFamilyChanged(mor.family_id, 'day');
     return NextResponse.json({
       data: { id: mission.id, status: 'active', sync: summary, replaced: (actives ?? []).length },
     });
@@ -219,6 +221,7 @@ export async function PATCH(
       return apiError('INVALID_STATE', 'Só uma missão em andamento pode ser encerrada', 422);
     }
     await settleMission(db, mor.family_id, mission);
+    await notifyFamilyChanged(mor.family_id, 'day');
     return NextResponse.json({ data: { id: mission.id, status: 'completed' } });
   }
 
@@ -228,5 +231,6 @@ export async function PATCH(
   }
   const { error } = await db.from('missions').update({ status: 'cancelled' }).eq('id', mission.id);
   if (error) return apiError('DB_ERROR', error.message, 500);
+  await notifyFamilyChanged(mor.family_id, 'day');
   return NextResponse.json({ data: { id: mission.id, status: 'cancelled' } });
 }

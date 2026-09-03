@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/infrastructure/supabase/server';
 import { resolveGuardianToken } from '@/lib/guardian-token';
 import { markActionDone } from '@/lib/mark-action-done';
+import { notifyFamilyChanged } from '@/lib/realtime';
 
 const STATUS_BY_CODE: Record<string, number> = {
   NOT_FOUND: 404,
@@ -48,6 +49,9 @@ export async function POST(
         { status: STATUS_BY_CODE[result.code] ?? 500 }
       );
     }
+
+    // O painel dos adultos e os outros aparelhos do guardião atualizam sozinhos.
+    await notifyFamilyChanged(auth.guardian.family_id, 'actions');
 
     return NextResponse.json({
       data: {

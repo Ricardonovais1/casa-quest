@@ -11,6 +11,7 @@
 
 import { NextResponse } from 'next/server';
 import { requireAdult, apiError } from '@/lib/require-mor';
+import { notifyFamilyChanged } from '@/lib/realtime';
 
 const DECISIONS = ['confirm', 'reject', 'done', 'missed', 'reopen'] as const;
 type Decision = (typeof DECISIONS)[number];
@@ -95,6 +96,9 @@ export async function PATCH(
     // Reopened: the previous decision no longer stands.
     await db.from('action_confirmations').delete().eq('mission_action_id', id);
   }
+
+  // A tela do guardião mostra a decisão na hora, sem recarregar.
+  await notifyFamilyChanged(me.family_id, 'actions');
 
   return NextResponse.json({ data: { id, status: update.status } });
 }

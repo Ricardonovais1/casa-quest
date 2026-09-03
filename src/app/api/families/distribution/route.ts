@@ -11,6 +11,7 @@
 // ============================================================
 
 import { NextResponse } from 'next/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { requireAdult, apiError } from '@/lib/require-mor';
 import {
   ensureCurrentDistribution,
@@ -19,6 +20,18 @@ import {
 } from '@/lib/distribution';
 import { ROTATION_INTERVAL_OPTIONS } from '@/lib/constants';
 import { isChild } from '@/lib/roles';
+import { syncFamilyDay } from '@/lib/daily-actions';
+import { notifyFamilyChanged } from '@/lib/realtime';
+
+/**
+ * Uma rodada nova só vale de verdade quando chega no dia do guardião:
+ * as ações de hoje que ainda estão pendentes trocam de dono e as telas
+ * abertas se atualizam sozinhas.
+ */
+async function applyToToday(db: SupabaseClient, familyId: string) {
+  await syncFamilyDay(db, familyId).catch(() => null);
+  await notifyFamilyChanged(familyId, 'distribution');
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -65,10 +78,12 @@ export async function POST(request: Request) {
   }
 
   if (body.mode === 'auto') {
-    const { assignments } = await ensureCurrentDistribution(db, mor.family_id, {
+    await ensureCurrentDistribution(db, mor.family_id, {
       force: true,
       seed: Math.floor(Math.random() * 100000),
     });
+    await applyToToday(db, mor.family_id);
+    const assignments = await getCurrentAssignments(db, mor.family_id);
     return NextResponse.json({ data: { assignments } });
   }
 
@@ -115,6 +130,8 @@ export async function POST(request: Request) {
       );
       if (error) return apiError('DB_ERROR', error.message, 500);
     }
+
+    await applyToToday(db, mor.family_id);
 
     const assignments = await getCurrentAssignments(db, mor.family_id);
     return NextResponse.json({ data: { assignments } });
