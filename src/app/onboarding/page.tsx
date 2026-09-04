@@ -327,7 +327,8 @@ export default function OnboardingPage() {
               ⏰ Tolerância para atrasos
             </label>
             <p className="mb-4 text-sm text-gray-500">
-              Cada ação tem um horário. Quantos minutos depois dele ainda vale, antes de virar falta?
+              As ações valem o dia todo por padrão. Se você marcar uma hora em alguma,
+              quantos minutos depois dela ainda vale, antes de virar falta?
             </p>
             <div className="flex flex-wrap gap-3">
               {[15, 30, 60, 120].map((t) => (

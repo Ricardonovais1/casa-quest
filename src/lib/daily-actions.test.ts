@@ -1,4 +1,5 @@
 import { missDeadline, planRealignment, type DayActionRow } from './daily-actions';
+import { dueTimeOf, dayEndOf } from './day-range';
 
 const MIN = 60_000;
 
@@ -28,35 +29,60 @@ describe('missDeadline', () => {
 });
 
 describe('planRealignment', () => {
-  const DUE = '2026-09-03T23:00:00.000Z';
+  const NOITE = '2026-09-04T01:00:00.000Z'; // 22:00 em São Paulo — o fim do dia
+  const MANHA = '2026-09-03T10:00:00.000Z'; // 07:00, uma hora marcada
   const LOUCA = 'tpl-louca';
   const MESA = 'tpl-mesa';
   const ESCOVAR = 'tpl-escovar'; // hábito: de todo mundo, nunca é distribuído
+  const TROPECO = 'tpl-tropeco'; // extra registrado pelo adulto, fora do dia gerado
   const AURORA = 'g-aurora';
   const LIRA = 'g-lira';
 
+  const daily = new Set([LOUCA, MESA, ESCOVAR]);
   const shared = new Set([LOUCA, MESA]);
-  const active = new Set([AURORA, LIRA]);
 
   function row(over: Partial<DayActionRow> = {}): DayActionRow {
     return {
       id: 'a1',
       guardian_id: AURORA,
       action_template_id: LOUCA,
-      due_at: DUE,
+      due_at: NOITE,
       status: 'pending',
       ...over,
     };
   }
-
-  it('passa a ação pendente para o novo dono da atividade', () => {
-    const plan = planRealignment([row()], new Map([[LOUCA, LIRA]]), shared, active);
-    expect(plan).toEqual({ move: [{ id: 'a1', guardianId: LIRA }], drop: [] });
+  const plan = (guardian_id: string, action_template_id: string, due_at = NOITE) => ({
+    guardian_id,
+    action_template_id,
+    due_at,
   });
 
-  it('não mexe em quem já está com a atividade', () => {
-    const plan = planRealignment([row()], new Map([[LOUCA, AURORA]]), shared, active);
-    expect(plan).toEqual({ move: [], drop: [] });
+  it('passa a ação pendente para o novo dono da atividade', () => {
+    const p = planRealignment([row()], [plan(LIRA, LOUCA)], daily, shared);
+    expect(p).toEqual({ move: [{ id: 'a1', guardianId: LIRA, dueAt: NOITE }], drop: [] });
+  });
+
+  it('não mexe em quem já está com a atividade no horário certo', () => {
+    const p = planRealignment([row()], [plan(AURORA, LOUCA)], daily, shared);
+    expect(p).toEqual({ move: [], drop: [] });
+  });
+
+  it('acerta a hora quando a ação passa a ter horário marcado', () => {
+    const p = planRealignment([row()], [plan(AURORA, LOUCA, MANHA)], daily, shared);
+    expect(p).toEqual({ move: [{ id: 'a1', guardianId: AURORA, dueAt: MANHA }], drop: [] });
+  });
+
+  it('acerta a hora dos hábitos de cada guardião quando o fim do dia muda', () => {
+    const rows = [
+      row({ id: 'h-aurora', action_template_id: ESCOVAR, guardian_id: AURORA, due_at: MANHA }),
+      row({ id: 'h-lira', action_template_id: ESCOVAR, guardian_id: LIRA, due_at: MANHA }),
+    ];
+    const p = planRealignment(rows, [plan(AURORA, ESCOVAR), plan(LIRA, ESCOVAR)], daily, shared);
+    expect(p.drop).toEqual([]);
+    expect(p.move).toEqual([
+      { id: 'h-aurora', guardianId: AURORA, dueAt: NOITE },
+      { id: 'h-lira', guardianId: LIRA, dueAt: NOITE },
+    ]);
   });
 
   it('não mexe no que já foi feito, marcado ou virou falta', () => {
@@ -65,14 +91,14 @@ describe('planRealignment', () => {
       row({ id: 'marcada', status: 'marked_done' }),
       row({ id: 'falta', status: 'missed' }),
     ];
-    const plan = planRealignment(rows, new Map([[LOUCA, LIRA]]), shared, active);
-    expect(plan).toEqual({ move: [], drop: [] });
+    const p = planRealignment(rows, [plan(LIRA, LOUCA)], daily, shared);
+    expect(p).toEqual({ move: [], drop: [] });
   });
 
-  it('não mexe em hábito, que não é distribuído', () => {
-    const rows = [row({ id: 'h1', action_template_id: ESCOVAR })];
-    const plan = planRealignment(rows, new Map([[LOUCA, LIRA]]), shared, active);
-    expect(plan).toEqual({ move: [], drop: [] });
+  it('não mexe em extra registrado pelo adulto', () => {
+    const rows = [row({ id: 'x', action_template_id: TROPECO })];
+    const p = planRealignment(rows, [], daily, shared);
+    expect(p).toEqual({ move: [], drop: [] });
   });
 
   it('apaga a antiga em vez de duplicar quando o novo dono já tem a linha do dia', () => {
@@ -80,18 +106,35 @@ describe('planRealignment', () => {
       row({ id: 'antiga', guardian_id: AURORA }),
       row({ id: 'nova', guardian_id: LIRA }),
     ];
-    const plan = planRealignment(rows, new Map([[LOUCA, LIRA]]), shared, active);
-    expect(plan).toEqual({ move: [], drop: ['antiga'] });
+    const p = planRealignment(rows, [plan(LIRA, LOUCA)], daily, shared);
+    expect(p).toEqual({ move: [], drop: ['antiga'] });
   });
 
   it('a linha do dia sai quando a atividade fica sem dono', () => {
-    const plan = planRealignment([row()], new Map(), shared, active);
-    expect(plan).toEqual({ move: [], drop: ['a1'] });
+    const p = planRealignment([row()], [], daily, shared);
+    expect(p).toEqual({ move: [], drop: ['a1'] });
   });
 
-  it('a linha do dia sai quando o novo dono não é mais um guardião ativo', () => {
-    const plan = planRealignment([row()], new Map([[LOUCA, 'g-saiu']]), shared, active);
-    expect(plan).toEqual({ move: [], drop: ['a1'] });
+  it('a linha do dia sai quando a frequência tira a ação de hoje', () => {
+    const rows = [row({ id: 'h1', action_template_id: ESCOVAR })];
+    const p = planRealignment(rows, [plan(AURORA, LOUCA)], daily, shared);
+    expect(p).toEqual({ move: [], drop: ['h1'] });
+  });
+
+  it('mesmo instante em formatos diferentes não é mudança', () => {
+    // O banco devolve "+00:00"; o dia planejado é ISO com "Z".
+    const doBanco = row({ due_at: '2026-09-04T01:00:00+00:00' });
+    const p = planRealignment([doBanco], [plan(AURORA, LOUCA, NOITE)], daily, shared);
+    expect(p).toEqual({ move: [], drop: [] });
+  });
+
+  it('não duplica quando o novo dono já tem a linha, em outro formato de data', () => {
+    const rows = [
+      row({ id: 'antiga', guardian_id: AURORA, due_at: '2026-09-04T01:00:00+00:00' }),
+      row({ id: 'nova', guardian_id: LIRA, due_at: '2026-09-04T01:00:00+00:00' }),
+    ];
+    const p = planRealignment(rows, [plan(LIRA, LOUCA, NOITE)], daily, shared);
+    expect(p).toEqual({ move: [], drop: ['antiga'] });
   });
 
   it('troca cruzada: cada um assume a do outro sem colidir', () => {
@@ -99,33 +142,31 @@ describe('planRealignment', () => {
       row({ id: 'louca', action_template_id: LOUCA, guardian_id: AURORA }),
       row({ id: 'mesa', action_template_id: MESA, guardian_id: LIRA }),
     ];
-    const plan = planRealignment(
-      rows,
-      new Map([
-        [LOUCA, LIRA],
-        [MESA, AURORA],
-      ]),
-      shared,
-      active
-    );
-    expect(plan.drop).toEqual([]);
-    expect(plan.move).toEqual([
-      { id: 'louca', guardianId: LIRA },
-      { id: 'mesa', guardianId: AURORA },
+    const p = planRealignment(rows, [plan(LIRA, LOUCA), plan(AURORA, MESA)], daily, shared);
+    expect(p.drop).toEqual([]);
+    expect(p.move).toEqual([
+      { id: 'louca', guardianId: LIRA, dueAt: NOITE },
+      { id: 'mesa', guardianId: AURORA, dueAt: NOITE },
     ]);
   });
+});
 
-  it('horários diferentes da mesma atividade não se atrapalham', () => {
-    const manha = '2026-09-03T10:00:00.000Z';
-    const rows = [
-      row({ id: 'manha', due_at: manha }),
-      row({ id: 'noite', due_at: DUE }),
-    ];
-    const plan = planRealignment(rows, new Map([[LOUCA, LIRA]]), shared, active);
-    expect(plan.drop).toEqual([]);
-    expect(plan.move).toEqual([
-      { id: 'manha', guardianId: LIRA },
-      { id: 'noite', guardianId: LIRA },
-    ]);
+describe('dueTimeOf', () => {
+  it('usa a hora marcada na ação', () => {
+    expect(dueTimeOf({ default_due_time: '07:00:00' }, '22:00')).toBe('07:00');
+  });
+
+  it('cai no fim do dia quando a ação não tem hora marcada', () => {
+    expect(dueTimeOf({ default_due_time: null }, '21:30')).toBe('21:30');
+  });
+});
+
+describe('dayEndOf', () => {
+  it('usa o horário da família', () => {
+    expect(dayEndOf({ day_end_time: '21:00:00' })).toBe('21:00');
+  });
+
+  it('vale 22:00 enquanto a coluna não existe', () => {
+    expect(dayEndOf({})).toBe('22:00');
   });
 });

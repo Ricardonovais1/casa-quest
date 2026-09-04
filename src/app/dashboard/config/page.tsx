@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { PageHeader, Notice, PageSkeleton, inputClass } from '@/components/ui/page';
 import { GenderSelect, type GenderValue } from '@/components/ui/gender-select';
 import { roleLabel, roleOf } from '@/lib/roles';
+import { dayEndOf } from '@/lib/day-range';
 import { cn } from '@/lib/utils';
 
 const TIMEZONES = [
@@ -84,6 +85,7 @@ function SettingsForm({
   const [name, setName] = useState(family.name);
   const [timezone, setTimezone] = useState(family.timezone || 'America/Sao_Paulo');
   const [tolerance, setTolerance] = useState(family.tolerance_minutes);
+  const [dayEnd, setDayEnd] = useState(dayEndOf(family));
   const [confirmation, setConfirmation] = useState<0 | 1>(family.quorum_fixed === 0 ? 0 : 1);
   const [missionDays, setMissionDays] = useState(family.mission_duration_days);
   const [recoveryEnabled, setRecoveryEnabled] = useState(family.recovery_enabled);
@@ -108,6 +110,8 @@ function SettingsForm({
     ? TIMEZONES
     : [{ value: timezone, label: timezone }, ...TIMEZONES];
 
+  // Migração 00009 aplicada? (a coluna volta do select('*'))
+  const schemaHasDayEnd = 'day_end_time' in family;
   const role = roleOf(me);
   const myLabels = role === 'mor' ? { f: 'Guardiã-Mor', m: 'Guardião-Mor' } : { f: 'Conselheira', m: 'Conselheiro' };
 
@@ -133,6 +137,8 @@ function SettingsForm({
       payload.equal_powers = equalPowers;
       payload.advisors_see_reward = advisorsSeeReward;
     }
+    // A coluna só existe depois da migração 00009.
+    if (schemaHasDayEnd) payload.day_end_time = dayEnd;
 
     const { error: updateError } = await supabase.from('families').update(payload).eq('id', family.id);
 
@@ -258,12 +264,36 @@ function SettingsForm({
             </div>
           </Card>
 
+          {/* Fim do dia */}
+          <Card>
+            <CardHeader>
+              <CardTitle>🌙 Fim do dia</CardTitle>
+              <CardDescription>
+                As ações não têm hora marcada por padrão: valem o dia todo e só viram falta
+                quando o dia fecha. A que horas isso acontece?
+              </CardDescription>
+            </CardHeader>
+            <input
+              type="time"
+              value={dayEnd}
+              onChange={(e) => setDayEnd(e.target.value || '22:00')}
+              disabled={!canManage || !schemaHasDayEnd}
+              className="w-32 rounded-lg border border-gray-300 px-3 py-2.5 text-sm disabled:bg-gray-50 disabled:text-gray-400"
+            />
+            {!schemaHasDayEnd && (
+              <p className="mt-2 text-[11px] text-amber-700">
+                Vale 22:00 até a migração 00009 do banco ser aplicada.
+              </p>
+            )}
+          </Card>
+
           {/* Tolerance */}
           <Card>
             <CardHeader>
               <CardTitle>⏰ Tolerância para atrasos</CardTitle>
               <CardDescription>
-                Cada ação tem um horário. Quantos minutos depois dele ainda vale, antes de virar falta?
+                Só para as ações com hora marcada: quantos minutos depois dela ainda vale,
+                antes de virar falta? O fim do dia não tem tolerância — já é o limite.
               </CardDescription>
             </CardHeader>
             <div className="flex flex-wrap gap-2">

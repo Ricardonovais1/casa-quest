@@ -16,8 +16,10 @@ export interface GuardianAction {
   name: string;
   categoryLabel: string;
   categoryEmoji: string;
-  /** "20:00" in the family's timezone */
+  /** "20:00" in the family's timezone — a hora marcada, ou o fim do dia */
   dueLabel: string;
+  /** A ação tem hora marcada? Sem hora, vale o dia todo. */
+  hasDueTime: boolean;
   /** "20:30" — last moment before it counts as a miss */
   deadlineLabel: string;
   /** Past the due time, still inside the tolerance window */
@@ -105,7 +107,9 @@ export function GuardianActionCard({
                 ? `⏰ Passou das ${action.dueLabel} — ainda vale até ${action.deadlineLabel}`
                 : action.isOverdue && canMark
                   ? `⏰ Passou das ${action.deadlineLabel}`
-                  : `até ${action.dueLabel}`}
+                  : action.hasDueTime
+                    ? `até ${action.dueLabel}`
+                    : `quando der, até as ${action.dueLabel}`}
           </p>
         </div>
 

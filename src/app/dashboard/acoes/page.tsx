@@ -12,6 +12,7 @@ import { getSupabaseBrowserClient } from '@/infrastructure/supabase/client';
 import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Notice } from '@/components/ui/page';
+import { hhmm, dayEndOf } from '@/lib/day-range';
 import {
   ACTION_CATEGORY_META,
   DEFAULT_ACTION_CATALOG,
@@ -26,7 +27,8 @@ interface ActionTemplate {
   description: string | null;
   category: string;
   action_type: string;
-  default_due_time: string;
+  /** Hora marcada. null = sem hora: vale o dia todo. */
+  default_due_time: string | null;
   confirmation_mode: string;
   is_active: boolean;
   points: number;
@@ -50,6 +52,7 @@ function normalizeConfirmation(mode: string): string {
 
 export default function ActionsPage() {
   const { family, canManage, loading: familyLoading } = useFamily();
+  const dayEnd = dayEndOf(family ?? {});
   const [templates, setTemplates] = useState<ActionTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -62,6 +65,7 @@ export default function ActionsPage() {
   const [category, setCategory] = useState('habitos');
   const [points, setPoints] = useState('');
   const [frequency, setFrequency] = useState<string>('diária');
+  const [hasDueTime, setHasDueTime] = useState(false);
   const [dueTime, setDueTime] = useState('20:00');
   const [description, setDescription] = useState('');
   const [confirmMode, setConfirmMode] = useState('none');
@@ -95,6 +99,7 @@ export default function ActionsPage() {
     setCategory('habitos');
     setPoints('');
     setFrequency('diária');
+    setHasDueTime(false);
     setDueTime('20:00');
     setDescription('');
     setConfirmMode('none');
@@ -112,7 +117,8 @@ export default function ActionsPage() {
     setCategory(t.category);
     setPoints(t.points != null ? String(t.points) : '');
     setFrequency(t.frequency || 'diária');
-    setDueTime(t.default_due_time || '20:00');
+    setHasDueTime(!!t.default_due_time);
+    setDueTime(hhmm(t.default_due_time) ?? '20:00');
     setDescription(t.description || '');
     setConfirmMode(normalizeConfirmation(t.confirmation_mode));
     setEditingId(t.id);
@@ -131,7 +137,8 @@ export default function ActionsPage() {
       action_type: CATEGORY_TO_ACTION_TYPE[category] ?? 'basic',
       points: points.trim() === '' ? 0 : parseInt(points, 10) || 0,
       frequency,
-      default_due_time: dueTime,
+      // Sem hora marcada é o padrão: a ação vale o dia todo.
+      default_due_time: hasDueTime ? dueTime : null,
       confirmation_mode: confirmMode,
     };
 
@@ -207,7 +214,7 @@ export default function ActionsPage() {
       action_type: CATEGORY_TO_ACTION_TYPE[s.category] ?? 'basic',
       points: s.points,
       frequency: s.frequency,
-      default_due_time: '20:00',
+      default_due_time: null,
       confirmation_mode: 'none',
       is_active: true,
     }));
@@ -416,16 +423,31 @@ export default function ActionsPage() {
               </div>
             </div>
 
-            <div className="flex gap-3">
-              <div className="flex-1">
-                <label className="text-xs font-medium text-gray-500">Horário</label>
+            <div className="rounded-lg bg-gray-50 p-3">
+              <label className="flex items-center gap-2 text-xs font-medium text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={hasDueTime}
+                  onChange={(e) => setHasDueTime(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-indigo-600"
+                />
+                Marcar um horário
+              </label>
+              {hasDueTime ? (
                 <input
                   type="time"
                   value={dueTime}
                   onChange={(e) => setDueTime(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm"
+                  className="mt-2 w-32 rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 />
-              </div>
+              ) : (
+                <p className="mt-1 text-[11px] text-gray-500">
+                  Sem hora marcada: vale o dia todo e só vira falta no fim do dia, às {dayEnd}.
+                </p>
+              )}
+            </div>
+
+            <div className="flex gap-3">
               <div className="flex-1">
                 <label className="text-xs font-medium text-gray-500">Confirmação</label>
                 <select
@@ -535,7 +557,7 @@ function TemplateRow({
           </p>
           <p className="text-[11px] text-gray-400">
             {template.frequency ? `${template.frequency} • ` : ''}
-            {template.default_due_time} • {modeLabel}
+            {hhmm(template.default_due_time) ?? 'sem hora'} • {modeLabel}
           </p>
         </div>
       </div>

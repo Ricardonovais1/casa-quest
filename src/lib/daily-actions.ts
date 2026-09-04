@@ -19,6 +19,8 @@ import {
   localDayRangeUtc,
   localDateTimeToUtc,
   weekdayInTz,
+  dayEndOf,
+  dueTimeOf,
 } from './day-range';
 import { isScheduledOn } from './scheduling';
 import { isChild } from './roles';
@@ -41,6 +43,8 @@ interface FamilyRow {
   id: string;
   timezone: string | null;
   tolerance_minutes: number | null;
+  /** Migração 00009. Hora em que o dia fecha; 22:00 antes dela. */
+  day_end_time?: string | null;
 }
 
 interface MissionRow {
@@ -62,61 +66,88 @@ export interface DayActionRow {
   status: string;
 }
 
+export interface PlannedAction {
+  guardian_id: string;
+  action_template_id: string;
+  due_at: string;
+}
+
 export interface RealignmentPlan {
-  /** Ações pendentes que passam para o novo dono da atividade. */
-  move: { id: string; guardianId: string }[];
-  /** Ações pendentes que somem: ninguém está com a atividade agora. */
+  /** Ações pendentes que mudam de dono, de horário, ou os dois. */
+  move: { id: string; guardianId: string; dueAt: string }[];
+  /** Ações pendentes que somem: não fazem mais parte do dia. */
   drop: string[];
 }
 
 /**
- * A distribuição pode mudar no meio do período — o Mor ajusta na mão ou
- * sorteia de novo. O que já está no dia precisa acompanhar:
+ * O combinado pode mudar depois que o dia já foi gerado: o Mor troca a
+ * distribuição, marca uma hora numa ação, muda o fim do dia. O que já está
+ * no dia precisa acompanhar:
  *
  *   • só mexe no que ainda está pendente — o que já foi feito, marcado ou
- *     virou falta é história do guardião que estava com a atividade;
- *   • só mexe nas atividades distribuídas (colaboração); hábito é de todos;
- *   • se o novo dono já tem aquela linha no dia, a antiga sai em vez de
- *     virar duplicata (a mesma tarefa apareceria para os dois);
- *   • se a atividade ficou sem dono, a linha pendente sai.
+ *     virou falta é história de quem estava com a ação;
+ *   • só mexe no que o dia gera (hábitos e colaboração); tropeços, missões
+ *     extras e escaladas são registros do Mor e ficam como estão;
+ *   • atividade de colaboração segue quem está com ela agora; hábito segue
+ *     com o mesmo guardião, só acerta a hora;
+ *   • se o novo dono já tem aquela linha, a antiga sai em vez de virar
+ *     duplicata (a mesma tarefa apareceria para os dois);
+ *   • se a ação saiu do dia (ficou sem dono, mudou de frequência), a linha
+ *     pendente sai junto.
  *
  * Pura: devolve o plano, quem chama aplica.
  */
 export function planRealignment(
   rows: DayActionRow[],
-  assignedTo: Map<string, string>,
-  sharedTemplateIds: Set<string>,
-  activeGuardianIds: Set<string>
+  planned: PlannedAction[],
+  dailyTemplateIds: Set<string>,
+  sharedTemplateIds: Set<string>
 ): RealignmentPlan {
   const plan: RealignmentPlan = { move: [], drop: [] };
+  // O banco devolve "…+00:00" e o dia planejado usa ISO "…Z": comparar
+  // texto diria que todo horário mudou. O instante é o que importa.
   const slot = (guardianId: string, templateId: string, dueAt: string) =>
-    `${guardianId}|${templateId}|${dueAt}`;
+    `${guardianId}|${templateId}|${Date.parse(dueAt)}`;
+  const sameInstant = (a: string, b: string) => Date.parse(a) === Date.parse(b);
 
-  // Quem já ocupa cada (guardião, atividade, horário) hoje — incluindo o que
-  // já foi feito ou virou falta, que continua ocupando o lugar.
+  // Onde cada linha deveria estar hoje.
+  const bySharedTemplate = new Map<string, PlannedAction>();
+  const byGuardianTemplate = new Map<string, PlannedAction>();
+  for (const p of planned) {
+    if (sharedTemplateIds.has(p.action_template_id)) {
+      bySharedTemplate.set(p.action_template_id, p);
+    }
+    byGuardianTemplate.set(`${p.guardian_id}|${p.action_template_id}`, p);
+  }
+
+  // Quem já ocupa cada (guardião, ação, horário) hoje — incluindo o que já
+  // foi feito ou virou falta, que continua ocupando o lugar.
   const taken = new Set(rows.map((r) => slot(r.guardian_id, r.action_template_id, r.due_at)));
 
   for (const row of rows) {
     if (row.status !== 'pending') continue;
-    if (!sharedTemplateIds.has(row.action_template_id)) continue;
+    if (!dailyTemplateIds.has(row.action_template_id)) continue;
 
-    const owner = assignedTo.get(row.action_template_id);
-    if (owner === row.guardian_id) continue;
+    const target = sharedTemplateIds.has(row.action_template_id)
+      ? bySharedTemplate.get(row.action_template_id)
+      : byGuardianTemplate.get(`${row.guardian_id}|${row.action_template_id}`);
 
-    if (!owner || !activeGuardianIds.has(owner)) {
+    if (!target) {
       plan.drop.push(row.id);
       continue;
     }
 
-    const target = slot(owner, row.action_template_id, row.due_at);
-    if (taken.has(target)) {
+    if (target.guardian_id === row.guardian_id && sameInstant(target.due_at, row.due_at)) continue;
+
+    const to = slot(target.guardian_id, row.action_template_id, target.due_at);
+    if (taken.has(to)) {
       plan.drop.push(row.id);
       continue;
     }
 
     taken.delete(slot(row.guardian_id, row.action_template_id, row.due_at));
-    taken.add(target);
-    plan.move.push({ id: row.id, guardianId: owner });
+    taken.add(to);
+    plan.move.push({ id: row.id, guardianId: target.guardian_id, dueAt: target.due_at });
   }
 
   return plan;
@@ -132,7 +163,7 @@ async function applyRealignment(
   for (const m of plan.move) {
     const { error } = await supabase
       .from('mission_actions')
-      .update({ guardian_id: m.guardianId })
+      .update({ guardian_id: m.guardianId, due_at: m.dueAt })
       .eq('id', m.id)
       // Se o guardião marcou "Fiz!" no meio da troca, a ação é dele.
       .eq('status', 'pending');
@@ -163,6 +194,7 @@ export async function ensureDailyActions(
   now: Date = new Date()
 ): Promise<{ generated: number; realigned: number }> {
   const tz = family.timezone || 'America/Sao_Paulo';
+  const dayEnd = dayEndOf(family);
   const { date, startUtc, endUtc } = localDayRangeUtc(tz, now);
   const weekday = weekdayInTz(tz, now);
 
@@ -190,10 +222,11 @@ export async function ensureDailyActions(
   for (const a of assignments) assignedTo.set(a.action_template_id, a.guardian_id);
 
   // What should exist today
-  const planned: { guardian_id: string; action_template_id: string; due_at: string }[] = [];
+  const planned: PlannedAction[] = [];
   for (const t of templates) {
     if (!isScheduledOn(t.frequency, weekday)) continue;
-    const dueAt = localDateTimeToUtc(tz, date, String(t.default_due_time || '20:00'));
+    // Sem hora marcada, a ação vale o dia todo e fecha no fim do dia.
+    const dueAt = localDateTimeToUtc(tz, date, dueTimeOf(t, dayEnd));
 
     if (t.category === 'cooperacao') {
       const gid = assignedTo.get(t.id);
@@ -216,15 +249,15 @@ export async function ensureDailyActions(
     .gte('due_at', startUtc)
     .lt('due_at', endUtc);
 
-  // A distribuição pode ter mudado depois que o dia foi gerado: o que ainda
-  // está pendente troca de dono antes de qualquer coisa, senão a tarefa
-  // apareceria para o antigo e para o novo guardião ao mesmo tempo.
+  // O combinado pode ter mudado depois que o dia foi gerado (distribuição,
+  // hora marcada, fim do dia): o que ainda está pendente se acerta antes de
+  // qualquer coisa, senão a tarefa apareceria duplicada ou no horário velho.
   const rows = (existing ?? []) as DayActionRow[];
   const plan = planRealignment(
     rows,
-    assignedTo,
-    new Set(templates.filter((t) => t.category === 'cooperacao').map((t) => t.id)),
-    new Set(guardians.map((g) => g.id))
+    planned,
+    new Set(templates.map((t) => t.id)),
+    new Set(templates.filter((t) => t.category === 'cooperacao').map((t) => t.id))
   );
   const realigned = await applyRealignment(supabase, plan);
 
@@ -269,6 +302,9 @@ const LATE_GENERATION_GRACE_MINUTES = 60;
  * Normally due + tolerance. If the action was generated late (nobody opened
  * the app and the cron had not run yet), the guardian still gets at least
  * an hour from generation — they never had a chance before that.
+ *
+ * Quem chama passa `toleranceMinutes` 0 para as ações sem hora marcada: o
+ * fim do dia já é o limite, não se soma tolerância em cima dele.
  */
 export function missDeadline(
   dueAt: string,
@@ -289,14 +325,21 @@ export async function sweepOverdueActions(
 ): Promise<number> {
   const { data: pending } = await supabase
     .from('mission_actions')
-    .select('id, due_at, created_at')
+    .select('id, due_at, created_at, action_templates(default_due_time)')
     .eq('mission_id', missionId)
     .eq('status', 'pending')
     .lt('due_at', now.toISOString());
 
-  const overdue = (pending ?? []).filter(
-    (a) => now.getTime() > missDeadline(a.due_at, a.created_at ?? a.due_at, toleranceMinutes)
-  );
+  const overdue = (pending ?? []).filter((a) => {
+    const rel = a.action_templates as
+      | { default_due_time: string | null }
+      | { default_due_time: string | null }[]
+      | null;
+    const template = Array.isArray(rel) ? rel[0] : rel;
+    // Hora marcada ganha a tolerância da casa; sem hora, o fim do dia é o fim.
+    const tolerance = template?.default_due_time ? toleranceMinutes : 0;
+    return now.getTime() > missDeadline(a.due_at, a.created_at ?? a.due_at, tolerance);
+  });
 
   if (overdue.length === 0) return 0;
 
@@ -373,9 +416,10 @@ export async function syncFamilyDay(
   familyId: string,
   now: Date = new Date()
 ): Promise<SyncSummary> {
+  // select('*') para seguir funcionando antes da migração 00009 (day_end_time).
   const { data: family } = await supabase
     .from('families')
-    .select('id, timezone, tolerance_minutes')
+    .select('*')
     .eq('id', familyId)
     .maybeSingle();
 

@@ -8,6 +8,8 @@
 // em UTC para consultar o banco.
 // ============================================================
 
+import { DEFAULT_DAY_END_TIME } from './constants';
+
 /**
  * Milliseconds that `timeZone` is ahead of UTC at the given instant.
  * (Negative for the Americas.)
@@ -98,6 +100,32 @@ export function localDateTimeToUtc(
   offset = timeZoneOffsetMs(timeZone, new Date(naive - offset));
 
   return new Date(naive - offset).toISOString();
+}
+
+/**
+ * `HH:MM` de um TIME do banco (`'20:00:00'`), ou null quando a ação não
+ * tem hora marcada. Serve tanto para exibir quanto para o input de hora.
+ */
+export function hhmm(time: string | null | undefined): string | null {
+  if (!time) return null;
+  const match = String(time).match(/^(\d{2}):(\d{2})/);
+  return match ? `${match[1]}:${match[2]}` : null;
+}
+
+/** Hora em que o dia da família fecha (`HH:MM`). */
+export function dayEndOf(family: { day_end_time?: string | null }): string {
+  return hhmm(family.day_end_time) ?? DEFAULT_DAY_END_TIME;
+}
+
+/**
+ * A hora que vale para uma ação: a que foi marcada nela ou, quando não há
+ * hora marcada (o normal), o fim do dia da família.
+ */
+export function dueTimeOf(
+  template: { default_due_time?: string | null },
+  dayEnd: string
+): string {
+  return hhmm(template.default_due_time) ?? dayEnd;
 }
 
 /** Day of week (0 = Sunday … 6 = Saturday) in `timeZone` at the instant. */

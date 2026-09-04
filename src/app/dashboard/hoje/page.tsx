@@ -45,6 +45,8 @@ interface TodayAction {
   name: string;
   category: string;
   points: number;
+  /** Hora marcada da ação. null = vale o dia todo. */
+  default_due_time: string | null;
 }
 
 interface ExtraTemplate {
@@ -80,12 +82,27 @@ const EXTRA_KINDS: { value: ExtraKind; label: string; emoji: string; help: strin
   },
 ];
 
-function flattenTemplate(rel: unknown): { name: string; category: string; points: number } {
+function flattenTemplate(rel: unknown): {
+  name: string;
+  category: string;
+  points: number;
+  default_due_time: string | null;
+} {
   const t = (Array.isArray(rel) ? rel[0] : rel) as
-    | { name: string; category: string; points: number | null }
+    | { name: string; category: string; points: number | null; default_due_time: string | null }
     | null
     | undefined;
-  return { name: t?.name ?? 'Ação', category: t?.category ?? 'habitos', points: t?.points ?? 0 };
+  return {
+    name: t?.name ?? 'Ação',
+    category: t?.category ?? 'habitos',
+    points: t?.points ?? 0,
+    default_due_time: t?.default_due_time ?? null,
+  };
+}
+
+/** "até 20:00" quando tem hora marcada; "dia todo" quando não tem. */
+function dueLabel(action: TodayAction, tz: string): string {
+  return action.default_due_time ? `até ${localTimeString(tz, action.due_at)}` : 'dia todo';
 }
 
 export default function TodayPage() {
@@ -132,7 +149,7 @@ export default function TodayPage() {
         supabase
           .from('mission_actions')
           .select(
-            'id, guardian_id, status, due_at, completed_at, recovers_action_id, escalada_points_earned, action_templates(name, category, points)'
+            'id, guardian_id, status, due_at, completed_at, recovers_action_id, escalada_points_earned, action_templates(name, category, points, default_due_time)'
           )
           .eq('mission_id', m.id)
           .gte('due_at', startUtc)
@@ -141,7 +158,7 @@ export default function TodayPage() {
         supabase
           .from('mission_actions')
           .select(
-            'id, guardian_id, status, due_at, completed_at, recovers_action_id, escalada_points_earned, action_templates(name, category, points)'
+            'id, guardian_id, status, due_at, completed_at, recovers_action_id, escalada_points_earned, action_templates(name, category, points, default_due_time)'
           )
           .eq('mission_id', m.id)
           .eq('status', 'marked_done')
@@ -372,7 +389,7 @@ export default function TodayPage() {
                           {cat?.emoji ?? '📋'} {a.name}
                         </p>
                         <p className="text-[11px] text-gray-500">
-                          {who} · {localTimeString(tz, a.due_at)}
+                          {who} · {dueLabel(a, tz)}
                           {a.due_at < localDayRangeUtc(tz).startUtc ? ' · dia anterior' : ''}
                         </p>
                       </div>
@@ -564,7 +581,9 @@ function ActionRow({
             {action.name}
           </p>
           <p className="text-[11px] text-gray-400">
-            {isExtra ? `${cat?.label ?? 'Extra'} · registrada ${localTimeString(tz, action.due_at)}` : `até ${localTimeString(tz, action.due_at)}`}
+            {isExtra
+              ? `${cat?.label ?? 'Extra'} · registrada ${localTimeString(tz, action.due_at)}`
+              : dueLabel(action, tz)}
             {action.escalada_points_earned ? ` · +${action.escalada_points_earned} energia` : ''}
             {action.recovers_action_id ? ' · compensa uma falta' : ''}
             {decidedBy && (action.status === 'confirmed' || action.status === 'missed') ? ` · por ${decidedBy}` : ''}

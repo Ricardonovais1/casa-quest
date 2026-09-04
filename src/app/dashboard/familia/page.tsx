@@ -16,6 +16,7 @@ import { GenderSelect, type GenderValue } from '@/components/ui/gender-select';
 import type { AssignmentRow } from '@/lib/distribution';
 import { GuardianAccessLink } from '@/components/guardians/guardian-access-link';
 import { describeSchedule } from '@/lib/scheduling';
+import { dayEndOf } from '@/lib/day-range';
 import { roleLabel, roleEmoji, roleOf, roleDescription } from '@/lib/roles';
 import { formatDate, cn } from '@/lib/utils';
 
@@ -314,6 +315,7 @@ export default function FamilyPage() {
         </CardHeader>
         <div className="space-y-2 text-sm">
           <Row label="Fuso horário" value={family.timezone || 'America/Sao_Paulo'} />
+          <Row label="Fim do dia" value={dayEndOf(family)} />
           <Row label="Tolerância para atrasos" value={`${family.tolerance_minutes} min`} />
           <Row label="Confirmação padrão" value={family.quorum_fixed === 0 ? 'Vale na hora' : 'Um adulto confirma'} />
           <Row label="Duração padrão da missão" value={`${family.mission_duration_days} dias`} />

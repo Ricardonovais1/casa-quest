@@ -48,6 +48,7 @@ SUPABASE_TOKEN=sbp_xxx node scripts/apply-migration.mjs 00006 00007 00008
 | 00006 | Índice único da geração diária (idempotência), índice de status, frequência padrão |
 | 00007 | **RLS completo** — cada família só enxerga os próprios dados. Obrigatória antes de abrir para outras famílias. |
 | 00008 | **Papéis** — Conselheiro(a), gênero para rótulos, "poderes iguais", mesada visível a conselheiros, políticas por papel. Requer a 00007. |
+| 00009 | **Horário opcional** — `families.day_end_time` (fim do dia, 22:00) e `action_templates.default_due_time` passa a aceitar NULL ("sem hora marcada"); limpa as ações que estavam no 20:00 do catálogo. |
 
 ## Como o dia funciona
 
@@ -55,9 +56,15 @@ SUPABASE_TOKEN=sbp_xxx node scripts/apply-migration.mjs 00006 00007 00008
    os guardiões; atividades de colaboração só para quem está com elas na distribuição do período; a
    frequência ("diária", "3×/semana"…) define os dias. Tropeços, missões extras e escaladas não têm horário:
    o Mor registra quando acontecem, no painel **Hoje**.
-2. **Faltas** — uma ação pendente vira falta depois de `due_at + tolerância` (se foi gerada atrasada, o
-   guardião ganha a tolerância a partir da geração).
-3. **Encerramento** — no dia seguinte ao fim da missão, energia final e mesada sugerida são gravadas em
+2. **Horário** — por padrão a ação não tem hora marcada: vale o dia todo e o `due_at` cai no
+   `day_end_time` da família (22:00). Quem quiser marca uma hora na ação, e aí valem o horário e a
+   tolerância da casa.
+3. **Faltas** — uma ação pendente vira falta depois de `due_at + tolerância` quando tem hora marcada, e
+   no fim do dia quando não tem (o fim do dia já é o limite, não soma tolerância). Se foi gerada
+   atrasada, o guardião ganha pelo menos uma hora a partir da geração.
+4. **Mudou no meio do dia?** — trocar a distribuição, marcar uma hora numa ação ou mudar o fim do dia
+   reacerta o que ainda está pendente hoje; o que já foi feito ou virou falta fica como está.
+5. **Encerramento** — no dia seguinte ao fim da missão, energia final e mesada sugerida são gravadas em
    `mission_guardians` e a missão fica `completed`.
 
 Isso roda ao abrir o painel do Mor, ao abrir o link de um guardião e todo dia às 00:05 (São Paulo) pelo

@@ -76,7 +76,8 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
   const [{ data: familyRow }, { data: members }, { assignments }] = await Promise.all([
     supabase
       .from('families')
-      .select('name, timezone, tolerance_minutes, recovery_enabled, auxilio_enabled, escalada_enabled')
+      // select('*') para seguir funcionando antes da migração 00009 (day_end_time).
+      .select('*')
       .eq('id', guardian.family_id)
       .single(),
     supabase
@@ -116,7 +117,9 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
   const { data: todaysActions } = mission
     ? await supabase
         .from('mission_actions')
-        .select('id, status, due_at, created_at, completed_at, action_templates(name, category, confirmation_mode)')
+        .select(
+          'id, status, due_at, created_at, completed_at, action_templates(name, category, confirmation_mode, default_due_time)'
+        )
         .eq('guardian_id', guardian.id)
         .eq('mission_id', mission.id)
         .gte('due_at', startUtc)
@@ -139,14 +142,23 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
   // returns the relation as an object or a single-element array depending on
   // how it infers the relationship, so handle both.
   const actions = (todaysActions ?? []).map((a) => {
-    const rel = a.action_templates as
-      | { name: string; category: string; confirmation_mode: string | null }
-      | { name: string; category: string; confirmation_mode: string | null }[]
-      | null;
+    type TemplateRel = {
+      name: string;
+      category: string;
+      confirmation_mode: string | null;
+      default_due_time: string | null;
+    };
+    const rel = a.action_templates as TemplateRel | TemplateRel[] | null;
     const template = Array.isArray(rel) ? rel[0] : rel;
     const category = template?.category ?? 'habitos';
     const meta = categoryMeta(category);
-    const deadline = missDeadline(a.due_at, a.created_at ?? a.due_at, tolerance);
+    // Hora marcada ganha a tolerância da casa; sem hora, o fim do dia é o fim.
+    const hasDueTime = !!template?.default_due_time;
+    const deadline = missDeadline(
+      a.due_at,
+      a.created_at ?? a.due_at,
+      hasDueTime ? tolerance : 0
+    );
 
     const action: GuardianAction = {
       id: a.id,
@@ -155,6 +167,7 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
       categoryLabel: meta?.label ?? category,
       categoryEmoji: meta?.emoji ?? '📋',
       dueLabel: localTimeString(tz, a.due_at),
+      hasDueTime,
       deadlineLabel: localTimeString(tz, new Date(deadline)),
       isLate: now.getTime() > Date.parse(a.due_at) && now.getTime() <= deadline,
       isOverdue: now.getTime() > deadline,

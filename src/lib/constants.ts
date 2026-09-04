@@ -14,6 +14,9 @@ export const APP_URL =
 /** Tempo real: evento de broadcast que avisa "algo mudou nesta família" */
 export const FAMILY_CHANGED_EVENT = 'family-changed';
 
+/** Fim do dia: hora em que o que ficou pendente sem hora marcada vira falta */
+export const DEFAULT_DAY_END_TIME = '22:00';
+
 /** Energy system */
 export const DEFAULT_INITIAL_ENERGY = 100;
 export const DEFAULT_RECOVERY_VALUE = 2;

@@ -38,6 +38,8 @@ export interface FamilyData {
   escalada_enabled: boolean;
   mission_duration_days: number;
   rotation_interval_months: number;
+  /** Migração 00009. Hora em que o dia fecha; 22:00 antes dela. */
+  day_end_time?: string | null;
   /** Migration 00008 */
   equal_powers?: boolean;
   advisors_see_reward?: boolean;

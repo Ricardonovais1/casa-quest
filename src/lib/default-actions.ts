@@ -101,7 +101,8 @@ export function buildActionInsert(seed: DefaultActionSeed) {
     action_type: CATEGORY_TO_ACTION_TYPE[seed.category] ?? 'basic',
     points: seed.points,
     frequency: seed.frequency,
-    default_due_time: '20:00',
+    // Sem hora marcada: a ação vale o dia todo e fecha no fim do dia da família.
+    default_due_time: null,
     confirmation_mode: 'none',
     is_active: true,
   };
