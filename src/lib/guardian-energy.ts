@@ -20,6 +20,20 @@ import { localDateString } from './day-range';
 // aqui até que uma migração a introduza.
 const RECURRENCE_WEIGHT = 0.5;
 
+/**
+ * Janela móvel da energia, em dias (inclui hoje).
+ *
+ * DECISION (2026-09-11): a energia passa a olhar só os últimos dias, não a
+ * missão inteira. Sem isso, a penalidade de reincidência — 2^k, com k = número
+ * de sequências de falta — crescia para sempre: a 9ª falta isolada de uma
+ * missão custava 129 pontos numa escala de 100, e não havia caminho de volta.
+ * Falta velha sai da conta; mérito velho também, para a janela ser coerente.
+ *
+ * DECISION: como recurrence_weight, fica constante aqui até que uma migração
+ * traga a coluna em `families`.
+ */
+export const ENERGY_WINDOW_DAYS = 30;
+
 export interface GuardianEnergy {
   percentage: number;
   finalEnergy: number;
@@ -28,7 +42,11 @@ export interface GuardianEnergy {
   cooperationScore: number;
   /** Dias seguidos, até hoje, sem nenhuma ação perdida. */
   streakDays: number;
-  /** Contagens da missão, para transparência. */
+  /** Início da janela considerada (YYYY-MM-DD, dia local da casa). */
+  windowStart: string;
+  /** Tamanho da janela em dias. */
+  windowDays: number;
+  /** Contagens dentro da janela, para transparência. `pending` é da missão toda. */
   counts: { done: number; missed: number; pending: number; recoveries: number; escaladaPoints: number };
 }
 
@@ -70,6 +88,23 @@ function anchorToLocalDay(at: Date | string, timeZone: string): Date {
   return new Date(`${localDateString(timeZone, d)}T12:00:00Z`);
 }
 
+/**
+ * First day the energy still looks at: `windowDays` counting back from today
+ * (today included), never before the mission started — nothing was expected
+ * then. Returned as a noon-UTC anchor, like every other date in here.
+ */
+export function energyWindowStart(
+  missionStart: Date,
+  now: Date,
+  timeZone: string,
+  windowDays: number = ENERGY_WINDOW_DAYS
+): Date {
+  const cutoff = anchorToLocalDay(now, timeZone);
+  cutoff.setUTCDate(cutoff.getUTCDate() - (Math.max(1, windowDays) - 1));
+  const start = anchorToLocalDay(missionStart, timeZone);
+  return cutoff.getTime() > start.getTime() ? cutoff : start;
+}
+
 /** Gather everything the energy engine needs and compute it. */
 export async function getGuardianEnergy(
   supabase: SupabaseClient,
@@ -82,7 +117,7 @@ export async function getGuardianEnergy(
   const [
     { data: mg },
     { data: missedActions },
-    { count: recoveryCount },
+    { data: recoveryActions },
     { data: confirmedActions },
     { count: pendingCount },
     { data: familyConfig },
@@ -102,14 +137,14 @@ export async function getGuardianEnergy(
       .order('missed_at', { ascending: true }),
     supabase
       .from('mission_actions')
-      .select('*', { count: 'exact', head: true })
+      .select('due_at')
       .eq('guardian_id', guardianId)
       .eq('mission_id', missionId)
       .eq('status', 'confirmed')
       .not('recovers_action_id', 'is', null),
     supabase
       .from('mission_actions')
-      .select('escalada_points_earned')
+      .select('escalada_points_earned, due_at')
       .eq('guardian_id', guardianId)
       .eq('mission_id', missionId)
       .eq('status', 'confirmed'),
@@ -129,21 +164,38 @@ export async function getGuardianEnergy(
   const tz = familyConfig?.timezone || 'America/Sao_Paulo';
   const initialEnergy = Number(mg?.initial_energy) || 100;
 
-  const escaladaPoints = (confirmedActions ?? []).reduce(
-    (sum, a) => sum + (a.escalada_points_earned || 0),
-    0
-  );
+  // A energia olha uma janela móvel: o que é mais velho que ela já não pesa,
+  // nem contra (faltas) nem a favor (compensações e escalada).
+  const windowStart = energyWindowStart(missionStart, now, tz);
+  const inWindow = (at: Date | string | null | undefined): boolean => {
+    if (!at) return false;
+    return anchorToLocalDay(at, tz).getTime() >= windowStart.getTime();
+  };
+
+  const escaladaPoints = (confirmedActions ?? [])
+    .filter((a) => inWindow(a.due_at))
+    .reduce((sum, a) => sum + (a.escalada_points_earned || 0), 0);
+
+  const doneCount = (confirmedActions ?? []).filter((a) => inWindow(a.due_at)).length;
+  const recoveryCount = (recoveryActions ?? []).filter((a) => inWindow(a.due_at)).length;
 
   // Group absences by template — a sequence is per-action, not per-guardian —
   // and only consecutive days form one sequence (2ⁿ − 1 grows with streaks
   // of neglect, not with the total count).
+  //
+  // `allMissedDates` fica sem filtro de janela de propósito: a constância
+  // ("X dias sem falta") conta para trás a partir de hoje e pararia cedo demais
+  // se uma falta antiga fosse simplesmente apagada da lista.
   const byTemplate = new Map<string, Date[]>();
   const allMissedDates: Date[] = [];
+  let missedInWindow = 0;
   for (const action of missedActions ?? []) {
     const when = action.missed_at ?? action.due_at;
     if (!when) continue;
     const date = anchorToLocalDay(when, tz);
     allMissedDates.push(date);
+    if (!inWindow(when)) continue;
+    missedInWindow++;
     const key = action.action_template_id ?? 'sem-template';
     const dates = byTemplate.get(key) ?? [];
     dates.push(date);
@@ -158,7 +210,7 @@ export async function getGuardianEnergy(
     sequences.push(...buildSequences(unique, guardianId, missionId, actionTemplateId));
   }
 
-  const result = computeEnergy(sequences, recoveryCount || 0, escaladaPoints, {
+  const result = computeEnergy(sequences, recoveryCount, escaladaPoints, {
     initialEnergy,
     recurrenceWeight: RECURRENCE_WEIGHT,
     recoveryValue: familyConfig?.recovery_value || 2,
@@ -175,11 +227,13 @@ export async function getGuardianEnergy(
       anchorToLocalDay(missionStart, tz),
       anchorToLocalDay(now, tz)
     ),
+    windowStart: windowStart.toISOString().split('T')[0]!,
+    windowDays: ENERGY_WINDOW_DAYS,
     counts: {
-      done: confirmedActions?.length ?? 0,
-      missed: missedActions?.length ?? 0,
+      done: doneCount,
+      missed: missedInWindow,
       pending: pendingCount ?? 0,
-      recoveries: recoveryCount ?? 0,
+      recoveries: recoveryCount,
       escaladaPoints,
     },
   };

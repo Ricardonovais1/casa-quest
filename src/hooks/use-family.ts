@@ -43,6 +43,9 @@ export interface FamilyData {
   /** Migration 00008 */
   equal_powers?: boolean;
   advisors_see_reward?: boolean;
+  /** Migração 00010. Alerta por e-mail quando um guardião cai da meta. */
+  performance_alerts_enabled?: boolean;
+  performance_alert_threshold?: number;
 }
 
 export interface GuardianData {

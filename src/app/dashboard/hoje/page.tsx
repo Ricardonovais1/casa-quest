@@ -5,7 +5,7 @@
 //
 // Sincroniza o dia (gera ações, marca faltas), lista o que cada
 // guardião tem para hoje, confirma o que foi marcado como feito e
-// registra eventos extras (tropeços, missões extras, escaladas).
+// registra eventos extras (tropeços e missões extras).
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -24,6 +24,12 @@ import {
 } from '@/components/ui/page';
 import { localDayRangeUtc, localTimeString, friendlyDate } from '@/lib/day-range';
 import { categoryMeta } from '@/lib/default-actions';
+import {
+  ALL_EXTRA_CATEGORIES,
+  EXTRA_KIND_META,
+  categoriesForKind,
+  type ExtraKind,
+} from '@/lib/extra-events';
 import { cn } from '@/lib/utils';
 
 interface Mission {
@@ -55,32 +61,6 @@ interface ExtraTemplate {
   category: string;
   points: number;
 }
-
-type ExtraKind = 'tropeco' | 'recovery' | 'escalada';
-
-const EXTRA_KINDS: { value: ExtraKind; label: string; emoji: string; help: string; categories: string[] }[] = [
-  {
-    value: 'tropeco',
-    label: 'Tropeço',
-    emoji: '⚠️',
-    help: 'Algo que deixou de fazer. Vira uma falta na energia.',
-    categories: ['tropecos'],
-  },
-  {
-    value: 'recovery',
-    label: 'Missão extra',
-    emoji: '🏆',
-    help: 'Compensa uma falta. Devolve energia.',
-    categories: ['missoes'],
-  },
-  {
-    value: 'escalada',
-    label: 'Escalada',
-    emoji: '⬆️',
-    help: 'Foi além do combinado. Energia extra.',
-    categories: ['gentilezas', 'autoaperfeicoamento', 'rendimento_escolar'],
-  },
-];
 
 function flattenTemplate(rel: unknown): {
   name: string;
@@ -208,7 +188,7 @@ export default function TodayPage() {
       .select('id, name, category, points')
       .eq('family_id', family.id)
       .eq('is_active', true)
-      .in('category', ['tropecos', 'missoes', 'gentilezas', 'autoaperfeicoamento', 'rendimento_escolar'])
+      .in('category', ALL_EXTRA_CATEGORIES)
       .order('name');
     setTemplates((extras ?? []) as ExtraTemplate[]);
 
@@ -297,9 +277,7 @@ export default function TodayPage() {
     return s;
   }, [actions]);
 
-  const extraOptions = templates.filter((t) =>
-    EXTRA_KINDS.find((k) => k.value === extraKind)!.categories.includes(t.category)
-  );
+  const extraOptions = templates.filter((t) => categoriesForKind(extraKind).includes(t.category));
 
   if (familyLoading || (loading && !familyError)) return <PageSkeleton blocks={3} />;
 
@@ -461,7 +439,8 @@ export default function TodayPage() {
             <CardHeader>
               <CardTitle>➕ Registrar um evento extra</CardTitle>
               <CardDescription>
-                Tropeços, missões extras e escaladas não têm horário — você registra quando acontecem.
+                Tropeços e missões extras não têm horário — você registra quando acontecem.
+                Os guardiões também registram as próprias missões extras pelo link deles.
               </CardDescription>
             </CardHeader>
 
@@ -480,8 +459,8 @@ export default function TodayPage() {
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-500">Tipo</label>
-                <div className="mt-1 grid grid-cols-3 gap-1 rounded-lg bg-gray-100 p-1">
-                  {EXTRA_KINDS.map((k) => (
+                <div className="mt-1 grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1">
+                  {EXTRA_KIND_META.map((k) => (
                     <button
                       key={k.value}
                       type="button"
@@ -499,7 +478,7 @@ export default function TodayPage() {
             </div>
 
             <p className="mt-2 text-xs text-gray-500">
-              {EXTRA_KINDS.find((k) => k.value === extraKind)!.help}
+              {EXTRA_KIND_META.find((k) => k.value === extraKind)!.help}
             </p>
 
             <div className="mt-3 flex flex-wrap items-end gap-2">
@@ -568,9 +547,7 @@ function ActionRow({
   onDecide: (d: 'confirm' | 'reject' | 'done' | 'missed' | 'reopen') => void;
 }) {
   const cat = categoryMeta(action.category);
-  const isExtra = ['tropecos', 'missoes', 'gentilezas', 'autoaperfeicoamento', 'rendimento_escolar'].includes(
-    action.category
-  );
+  const isExtra = ALL_EXTRA_CATEGORIES.includes(action.category);
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 py-2.5">

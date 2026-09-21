@@ -14,12 +14,21 @@ import { getGuardianEnergy } from '@/lib/guardian-energy';
 import { syncFamilyDay, missDeadline } from '@/lib/daily-actions';
 import { describeSchedule } from '@/lib/scheduling';
 import { categoryMeta } from '@/lib/default-actions';
+import {
+  ALL_EXTRA_CATEGORIES,
+  EXTRA_EVENT_CATEGORIES,
+  extrasEnabled,
+} from '@/lib/extra-events';
 import { isAdult } from '@/lib/roles';
 import { formatDate } from '@/lib/utils';
 import {
   GuardianActionCard,
   type GuardianAction,
 } from '@/components/guardians/guardian-action-card';
+import {
+  GuardianExtras,
+  type GuardianExtraOption,
+} from '@/components/guardians/guardian-extras';
 import { InstallPrompt } from '@/components/pwa/install-prompt';
 import { LiveRefresh } from '@/components/realtime/live-refresh';
 import { familyChannelName } from '@/lib/realtime';
@@ -39,8 +48,6 @@ export async function generateMetadata({ params }: GuardianPageProps): Promise<M
     manifest: `/api/manifest?start=${encodeURIComponent(`/g/${token}`)}`,
   };
 }
-
-const EXTRA_CATEGORIES = ['tropecos', 'missoes', 'gentilezas', 'autoaperfeicoamento', 'rendimento_escolar'];
 
 export default async function GuardianPage({ params }: GuardianPageProps) {
   const { token } = await params;
@@ -73,21 +80,30 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
   // and record yesterday's misses if the cron has not run yet.
   await syncFamilyDay(supabase, guardian.family_id, now).catch(() => null);
 
-  const [{ data: familyRow }, { data: members }, { assignments }] = await Promise.all([
-    supabase
-      .from('families')
-      // select('*') para seguir funcionando antes da migração 00009 (day_end_time).
-      .select('*')
-      .eq('id', guardian.family_id)
-      .single(),
-    supabase
-      .from('guardians')
-      .select('*')
-      .eq('family_id', guardian.family_id)
-      .eq('is_active', true)
-      .order('is_mor', { ascending: false }),
-    ensureCurrentDistribution(supabase, guardian.family_id),
-  ]);
+  const [{ data: familyRow }, { data: members }, { assignments }, { data: extraTemplates }] =
+    await Promise.all([
+      supabase
+        .from('families')
+        // select('*') para seguir funcionando antes da migração 00009 (day_end_time).
+        .select('*')
+        .eq('id', guardian.family_id)
+        .single(),
+      supabase
+        .from('guardians')
+        .select('*')
+        .eq('family_id', guardian.family_id)
+        .eq('is_active', true)
+        .order('is_mor', { ascending: false }),
+      ensureCurrentDistribution(supabase, guardian.family_id),
+      // O que o guardião pode registrar por conta própria. Tropeço não entra.
+      supabase
+        .from('action_templates')
+        .select('id, name, category, description')
+        .eq('family_id', guardian.family_id)
+        .eq('is_active', true)
+        .in('category', EXTRA_EVENT_CATEGORIES)
+        .order('name'),
+    ]);
 
   const tz = familyRow?.timezone || 'America/Sao_Paulo';
   const tolerance = familyRow?.tolerance_minutes ?? 30;
@@ -172,10 +188,11 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
       isLate: now.getTime() > Date.parse(a.due_at) && now.getTime() <= deadline,
       isOverdue: now.getTime() > deadline,
       completedLabel: a.completed_at ? localTimeString(tz, a.completed_at) : null,
-      isExtra: EXTRA_CATEGORIES.includes(category),
+      isExtra: ALL_EXTRA_CATEGORIES.includes(category),
     };
     return {
       action,
+      category,
       needsConfirmation: (template?.confirmation_mode ?? 'none') !== 'none',
     };
   });
@@ -189,23 +206,24 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
   const pendingCount = scheduled.filter((a) => a.action.status === 'pending').length;
   const allDone = scheduled.length > 0 && pendingCount === 0 && scheduled.every((a) => a.action.status !== 'marked_done');
 
-  const extras = [
-    familyRow?.recovery_enabled && {
-      icon: '🏆',
-      label: 'Missão extra',
-      text: 'Fez uma tarefa grande além do combinado? Recupera energia perdida.',
-    },
-    familyRow?.escalada_enabled && {
-      icon: '⬆️',
-      label: 'Escalada',
-      text: 'Gentileza, estudo, algo a mais? Sobe a energia acima de 100.',
-    },
-    familyRow?.auxilio_enabled && {
-      icon: '🤝',
-      label: 'Ajudar alguém',
-      text: 'Fez a tarefa de outro guardião? Conta como cooperação.',
-    },
-  ].filter(Boolean) as { icon: string; label: string; text: string }[];
+  // Missão extra: o guardião registra sozinho, sem esperar aprovação.
+  const canRegisterExtras = extrasEnabled(familyRow);
+  const extraOptions: GuardianExtraOption[] = canRegisterExtras
+    ? (extraTemplates ?? []).map((t) => {
+        const meta = categoryMeta(t.category);
+        return {
+          id: t.id,
+          name: t.name,
+          categoryLabel: meta?.label ?? 'Missão extra',
+          categoryEmoji: meta?.emoji ?? '🏆',
+          hint: t.description ?? null,
+        };
+      })
+    : [];
+
+  const registeredExtrasToday = actions
+    .filter((a) => EXTRA_EVENT_CATEGORIES.includes(a.category) && a.action.status === 'confirmed')
+    .map((a) => a.action.name);
 
   return (
     <main className="min-h-screen bg-gray-50 pb-16">
@@ -320,23 +338,22 @@ export default async function GuardianPage({ params }: GuardianPageProps) {
           </section>
         )}
 
-        {/* Extras */}
-        {mission && extras.length > 0 && (
+        {/* Missão extra — registrada pelo próprio guardião */}
+        {mission && extraOptions.length > 0 && (
+          <GuardianExtras
+            token={token}
+            options={extraOptions}
+            registeredToday={registeredExtrasToday}
+          />
+        )}
+
+        {/* Auxílio ainda passa por um adulto: mexe na cooperação de outro guardião. */}
+        {mission && familyRow?.auxilio_enabled && (
           <section className="rounded-2xl border border-dashed border-gray-300 bg-white/60 p-4">
-            <h2 className="text-sm font-semibold text-gray-700">Fez algo a mais?</h2>
+            <h2 className="text-sm font-semibold text-gray-700">🤝 Ajudou alguém?</h2>
             <p className="mt-1 text-xs text-gray-500">
-              Conta pra {morName}: essas coisas são registradas no painel e mudam a sua energia.
+              Fez a tarefa de outro guardião? Conta pra {morName} — isso entra como cooperação.
             </p>
-            <ul className="mt-3 space-y-2">
-              {extras.map((e) => (
-                <li key={e.label} className="flex gap-2 text-xs text-gray-600">
-                  <span className="text-base leading-none">{e.icon}</span>
-                  <span>
-                    <strong className="text-gray-800">{e.label}.</strong> {e.text}
-                  </span>
-                </li>
-              ))}
-            </ul>
           </section>
         )}
 

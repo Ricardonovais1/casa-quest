@@ -8,6 +8,7 @@ import { SignOutButton } from '@/components/layout/signout-button';
 import { DashboardSidebar, DashboardMobileNav } from '@/components/layout/dashboard-nav';
 import { AuthGuardClient } from './auth-guard-client';
 import { InstallPrompt } from '@/components/pwa/install-prompt';
+import { DailySummaryModal } from '@/components/daily/daily-summary-modal';
 
 export default function DashboardLayout({
   children,
@@ -16,6 +17,8 @@ export default function DashboardLayout({
 }) {
   return (
     <AuthGuardClient>
+      {/* Primeira abertura do dia: como foi ontem */}
+      <DailySummaryModal />
       <div className="flex min-h-screen">
         {/* Sidebar — desktop */}
         <aside className="sticky top-0 hidden h-screen w-64 flex-col border-r border-gray-200 bg-white lg:flex">

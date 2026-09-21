@@ -18,8 +18,10 @@ import { SignOutButton } from './signout-button';
 export const NAVIGATION = [
   { name: 'Hoje', href: '/dashboard/hoje', icon: '☀️', manage: false },
   { name: 'Visão geral', href: '/dashboard', icon: '🏠', manage: false },
+  // Guardiões não tem entrada própria: a rota existe, mas se chega nela
+  // pelo botão "Gerenciar guardiões" dentro de Família, que é onde a
+  // pessoa já está olhando para a casa inteira.
   { name: 'Família', href: '/dashboard/familia', icon: '👨‍👩‍👧‍👦', manage: false },
-  { name: 'Guardiões', href: '/dashboard/guardioes', icon: '🦸', manage: true },
   { name: 'Ações', href: '/dashboard/acoes', icon: '✅', manage: true },
   { name: 'Distribuição', href: '/dashboard/distribuicao', icon: '🎲', manage: true },
   { name: 'Missões', href: '/dashboard/missoes', icon: '🎯', manage: false },
@@ -29,9 +31,17 @@ export const NAVIGATION = [
 
 const MOBILE_PRIMARY = ['/dashboard/hoje', '/dashboard', '/dashboard/familia', '/dashboard/missoes'];
 
+/** Rotas sem entrada no menu, acessadas de dentro de outra seção. */
+const NAV_ALIASES: Record<string, string[]> = {
+  '/dashboard/familia': ['/dashboard/guardioes'],
+};
+
 function isActive(pathname: string, href: string) {
   if (href === '/dashboard') return pathname === '/dashboard';
-  return pathname === href || pathname.startsWith(`${href}/`);
+  if (pathname === href || pathname.startsWith(`${href}/`)) return true;
+  return (NAV_ALIASES[href] ?? []).some(
+    (alias) => pathname === alias || pathname.startsWith(`${alias}/`)
+  );
 }
 
 function useVisibleNavigation() {

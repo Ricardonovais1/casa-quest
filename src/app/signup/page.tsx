@@ -26,6 +26,22 @@ export default function SignupPage() {
 
         <SignupForm />
 
+        {/* O aceite fica aqui, ao lado do botão que cria a casa — não escondido no rodapé. */}
+        <p className="mt-5 text-center text-xs leading-relaxed text-gray-500">
+          Ao criar a sua casa, você concorda com os{' '}
+          <Link href="/termos" className="font-semibold text-gray-600 underline hover:text-gray-800">
+            Termos de Uso
+          </Link>{' '}
+          e a{' '}
+          <Link
+            href="/privacidade"
+            className="font-semibold text-gray-600 underline hover:text-gray-800"
+          >
+            Política de Privacidade
+          </Link>
+          , e declara ser responsável pelas crianças que cadastrar.
+        </p>
+
         <p className="mt-6 text-center text-sm text-gray-500">
           Já tem conta?{' '}
           <Link href="/login" className="font-semibold text-indigo-600 hover:text-indigo-500">

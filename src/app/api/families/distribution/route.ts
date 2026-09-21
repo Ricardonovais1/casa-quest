@@ -3,6 +3,8 @@
 // GET  /api/families/distribution           → current period (generates if missing)
 // POST /api/families/distribution { mode }  → 'auto' (force regenerate)
 //                                             'manual' (save explicit assignments)
+//                                             'patch' (troca ou atribuição pontual,
+//                                                      mantendo as datas da rodada)
 //                                             'interval' (change rotation months)
 //
 // Roda no servidor com a service role (depois de autorizar o Mor): a
@@ -33,6 +35,29 @@ async function applyToToday(db: SupabaseClient, familyId: string) {
   await notifyFamilyChanged(familyId, 'distribution');
 }
 
+/** Only this family's active collaborative templates and active guardians. */
+async function loadEligible(db: SupabaseClient, familyId: string) {
+  const [{ data: templates }, { data: guardians }, { data: family }] = await Promise.all([
+    db
+      .from('action_templates')
+      .select('id')
+      .eq('family_id', familyId)
+      .eq('category', 'cooperacao')
+      .eq('is_active', true),
+    db
+      .from('guardians')
+      .select('*')
+      .eq('family_id', familyId)
+      .eq('is_active', true),
+    db.from('families').select('rotation_interval_months').eq('id', familyId).single(),
+  ]);
+  return {
+    templateIds: new Set((templates ?? []).map((t) => t.id as string)),
+    guardianIds: new Set((guardians ?? []).filter(isChild).map((g) => g.id as string)),
+    intervalMonths: (family?.rotation_interval_months as number | null | undefined) ?? 1,
+  };
+}
+
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
@@ -48,6 +73,11 @@ interface ManualBody {
   mode: 'manual';
   assignments: { templateId: string; guardianId: string }[];
 }
+interface PatchBody {
+  mode: 'patch';
+  /** guardianId null = a atividade fica sem ninguém nesta rodada. */
+  changes: { templateId: string; guardianId: string | null }[];
+}
 interface AutoBody {
   mode: 'auto';
 }
@@ -61,7 +91,12 @@ export async function POST(request: Request) {
   if (!auth.ok) return auth.response;
   const { db, mor } = auth.ctx;
 
-  const body = (await request.json().catch(() => null)) as ManualBody | AutoBody | IntervalBody | null;
+  const body = (await request.json().catch(() => null)) as
+    | ManualBody
+    | PatchBody
+    | AutoBody
+    | IntervalBody
+    | null;
   if (!body?.mode) return apiError('VALIDATION_ERROR', 'Informe o modo', 400);
 
   if (body.mode === 'interval') {
@@ -89,27 +124,10 @@ export async function POST(request: Request) {
 
   if (body.mode === 'manual') {
     const wanted = Array.isArray(body.assignments) ? body.assignments : [];
-
-    // Only this family's active collaborative templates and active guardians.
-    const [{ data: templates }, { data: guardians }, { data: family }] = await Promise.all([
-      db
-        .from('action_templates')
-        .select('id')
-        .eq('family_id', mor.family_id)
-        .eq('category', 'cooperacao')
-        .eq('is_active', true),
-      db
-        .from('guardians')
-        .select('*')
-        .eq('family_id', mor.family_id)
-        .eq('is_active', true),
-      db.from('families').select('rotation_interval_months').eq('id', mor.family_id).single(),
-    ]);
-    const templateIds = new Set((templates ?? []).map((t) => t.id));
-    const guardianIds = new Set((guardians ?? []).filter(isChild).map((g) => g.id));
+    const { templateIds, guardianIds, intervalMonths } = await loadEligible(db, mor.family_id);
 
     const rows = wanted.filter((a) => templateIds.has(a.templateId) && guardianIds.has(a.guardianId));
-    const { validFrom, validUntil } = computePeriod(family?.rotation_interval_months ?? 1);
+    const { validFrom, validUntil } = computePeriod(intervalMonths);
 
     const { error: delError } = await db
       .from('action_assignments')
@@ -128,6 +146,58 @@ export async function POST(request: Request) {
           valid_until: validUntil,
         }))
       );
+      if (error) return apiError('DB_ERROR', error.message, 500);
+    }
+
+    await applyToToday(db, mor.family_id);
+
+    const assignments = await getCurrentAssignments(db, mor.family_id);
+    return NextResponse.json({ data: { assignments } });
+  }
+
+  // Ajuste pontual — a troca ou a atribuição sugerida na revisão da divisão.
+  // Mexe só nas atividades citadas e mantém as datas da rodada: o modo manual
+  // regrava tudo e recomeça o período a partir de hoje, e trocar uma tarefa
+  // não deveria adiar o próximo rodízio.
+  if (body.mode === 'patch') {
+    const changes = Array.isArray(body.changes) ? body.changes : [];
+    if (changes.length === 0) return apiError('VALIDATION_ERROR', 'Nada para ajustar', 400);
+
+    const { templateIds, guardianIds, intervalMonths } = await loadEligible(db, mor.family_id);
+    const invalid = changes.some(
+      (c) =>
+        !c ||
+        !templateIds.has(c.templateId) ||
+        (c.guardianId !== null && !guardianIds.has(c.guardianId))
+    );
+    if (invalid) return apiError('VALIDATION_ERROR', 'Atividade ou guardião inválido', 400);
+
+    const current = await getCurrentAssignments(db, mor.family_id);
+    const { validFrom, validUntil } = current[0]
+      ? { validFrom: current[0].valid_from, validUntil: current[0].valid_until }
+      : computePeriod(intervalMonths);
+
+    for (const change of changes) {
+      const existing = current.find(
+        (a) => a.action_template_id === change.templateId && a.valid_from === validFrom
+      );
+      let error: { message: string } | null = null;
+      if (change.guardianId === null) {
+        if (existing) ({ error } = await db.from('action_assignments').delete().eq('id', existing.id));
+      } else if (existing) {
+        ({ error } = await db
+          .from('action_assignments')
+          .update({ guardian_id: change.guardianId })
+          .eq('id', existing.id));
+      } else {
+        ({ error } = await db.from('action_assignments').insert({
+          family_id: mor.family_id,
+          action_template_id: change.templateId,
+          guardian_id: change.guardianId,
+          valid_from: validFrom,
+          valid_until: validUntil,
+        }));
+      }
       if (error) return apiError('DB_ERROR', error.message, 500);
     }
 

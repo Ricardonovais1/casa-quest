@@ -23,7 +23,7 @@ import {
   dueTimeOf,
 } from './day-range';
 import { isScheduledOn } from './scheduling';
-import { isChild } from './roles';
+import { isChild, type RoleSubject } from './roles';
 import { ensureCurrentDistribution } from './distribution';
 import { getGuardianEnergy } from './guardian-energy';
 import { calculateReward } from '@/domain/reward/calculator';
@@ -316,12 +316,20 @@ export function missDeadline(
   return Math.max(Date.parse(dueAt) + tol, Date.parse(createdAt) + grace);
 }
 
-/** Turn overdue pending actions into misses. Returns how many changed. */
+/**
+ * Turn overdue pending actions into misses. Returns how many changed.
+ *
+ * `grace` isenta o primeiro dia da missão: as ações desse dia nascem quando a
+ * missão é criada, muitas vezes com o dia já adiantado, e ninguém falta com o
+ * que ainda não sabia que existia. Sem isso, a missão começava com uma
+ * enxurrada de faltas — numa família real foram 17 faltas no dia 1.
+ */
 export async function sweepOverdueActions(
   supabase: SupabaseClient,
   missionId: string,
   toleranceMinutes: number,
-  now: Date = new Date()
+  now: Date = new Date(),
+  grace: { missionStart?: string; timeZone?: string } = {}
 ): Promise<number> {
   const { data: pending } = await supabase
     .from('mission_actions')
@@ -330,7 +338,12 @@ export async function sweepOverdueActions(
     .eq('status', 'pending')
     .lt('due_at', now.toISOString());
 
+  const tz = grace.timeZone || 'America/Sao_Paulo';
+  const firstDay = grace.missionStart ?? null;
+
   const overdue = (pending ?? []).filter((a) => {
+    // Dia 1 da missão nunca vira falta.
+    if (firstDay && localDateString(tz, new Date(a.due_at)) === firstDay) return false;
     const rel = a.action_templates as
       | { default_due_time: string | null }
       | { default_due_time: string | null }[]
@@ -368,13 +381,15 @@ export async function settleMission(
 ): Promise<void> {
   const { data: rows } = await supabase
     .from('mission_guardians')
-    .select('id, guardian_id, initial_energy, target_reward, cooperation_score, guardians!inner(is_mor)')
+    .select('id, guardian_id, initial_energy, target_reward, cooperation_score, guardians!inner(is_mor, role)')
     .eq('mission_id', mission.id);
 
   for (const row of rows ?? []) {
-    const rel = row.guardians as { is_mor: boolean } | { is_mor: boolean }[] | null;
-    const isMor = Array.isArray(rel) ? rel[0]?.is_mor : rel?.is_mor;
-    if (isMor) continue;
+    // Mesada é só das crianças. Filtrar por `is_mor` deixava passar o
+    // Conselheiro (is_mor = false), que ganharia energia e mesada calculadas.
+    const rel = row.guardians as RoleSubject | RoleSubject[] | null;
+    const who = Array.isArray(rel) ? rel[0] : rel;
+    if (!isChild(who)) continue;
 
     const energy = await getGuardianEnergy(
       supabase,
@@ -455,7 +470,8 @@ export async function syncFamilyDay(
       supabase,
       mission.id,
       family.tolerance_minutes ?? 30,
-      now
+      now,
+      { missionStart: mission.start_at, timeZone: tz }
     );
     await settleMission(supabase, familyId, mission);
     base.missionStatus = 'settled';
@@ -475,7 +491,8 @@ export async function syncFamilyDay(
     supabase,
     mission.id,
     family.tolerance_minutes ?? 30,
-    now
+    now,
+    { missionStart: mission.start_at, timeZone: tz }
   );
   return base;
 }

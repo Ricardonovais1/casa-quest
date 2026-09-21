@@ -15,6 +15,8 @@ import { Button } from '@/components/ui/button';
 import { PageHeader, Notice, PageSkeleton, inputClass } from '@/components/ui/page';
 import { GenderSelect, type GenderValue } from '@/components/ui/gender-select';
 import { roleLabel, roleOf } from '@/lib/roles';
+import { extrasEnabled } from '@/lib/extra-events';
+import { DEFAULT_ALERT_THRESHOLD } from '@/domain/alerts/performance';
 import { dayEndOf } from '@/lib/day-range';
 import { cn } from '@/lib/utils';
 
@@ -88,10 +90,17 @@ function SettingsForm({
   const [dayEnd, setDayEnd] = useState(dayEndOf(family));
   const [confirmation, setConfirmation] = useState<0 | 1>(family.quorum_fixed === 0 ? 0 : 1);
   const [missionDays, setMissionDays] = useState(family.mission_duration_days);
-  const [recoveryEnabled, setRecoveryEnabled] = useState(family.recovery_enabled);
+  // "Missão extra" e "escalada" viram um conceito só: um interruptor,
+  // as duas colunas do banco andam juntas.
+  const [extrasOn, setExtrasOn] = useState(extrasEnabled(family));
   const [recoveryValue, setRecoveryValue] = useState(family.recovery_value);
   const [auxilioEnabled, setAuxilioEnabled] = useState(family.auxilio_enabled);
-  const [escaladaEnabled, setEscaladaEnabled] = useState(family.escalada_enabled);
+  const [alertsEnabled, setAlertsEnabled] = useState(family.performance_alerts_enabled !== false);
+  const [alertThreshold, setAlertThreshold] = useState(
+    family.performance_alert_threshold ?? DEFAULT_ALERT_THRESHOLD
+  );
+  const [alertTesting, setAlertTesting] = useState(false);
+  const [alertMsg, setAlertMsg] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [equalPowers, setEqualPowers] = useState(!!family.equal_powers);
   const [advisorsSeeReward, setAdvisorsSeeReward] = useState(family.advisors_see_reward !== false);
 
@@ -110,8 +119,9 @@ function SettingsForm({
     ? TIMEZONES
     : [{ value: timezone, label: timezone }, ...TIMEZONES];
 
-  // Migração 00009 aplicada? (a coluna volta do select('*'))
+  // Migração 00009/00010 aplicada? (a coluna volta do select('*'))
   const schemaHasDayEnd = 'day_end_time' in family;
+  const schemaHasAlerts = 'performance_alerts_enabled' in family;
   const role = roleOf(me);
   const myLabels = role === 'mor' ? { f: 'Guardiã-Mor', m: 'Guardião-Mor' } : { f: 'Conselheira', m: 'Conselheiro' };
 
@@ -128,10 +138,10 @@ function SettingsForm({
       quorum_type: 'fixed',
       quorum_fixed: confirmation,
       mission_duration_days: missionDays,
-      recovery_enabled: recoveryEnabled,
+      recovery_enabled: extrasOn,
       recovery_value: recoveryValue,
       auxilio_enabled: auxilioEnabled,
-      escalada_enabled: escaladaEnabled,
+      escalada_enabled: extrasOn,
     };
     if (schemaHasRoles) {
       payload.equal_powers = equalPowers;
@@ -139,6 +149,11 @@ function SettingsForm({
     }
     // A coluna só existe depois da migração 00009.
     if (schemaHasDayEnd) payload.day_end_time = dayEnd;
+    // As de alerta, depois da 00010.
+    if (schemaHasAlerts) {
+      payload.performance_alerts_enabled = alertsEnabled;
+      payload.performance_alert_threshold = alertThreshold;
+    }
 
     const { error: updateError } = await supabase.from('families').update(payload).eq('id', family.id);
 
@@ -176,6 +191,28 @@ function SettingsForm({
     setPasswordMsg(pwError ? { kind: 'error', text: pwError.message } : { kind: 'success', text: 'Senha atualizada.' });
     if (!pwError) setNewPassword('');
     setPasswordBusy(false);
+  }
+
+  async function handleAlertTest() {
+    setAlertTesting(true);
+    setAlertMsg(null);
+    try {
+      const res = await fetch('/api/alerts/performance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // `force` ignora o intervalo entre avisos: é um teste de configuração.
+        body: JSON.stringify({ force: true }),
+      });
+      const body = await res.json().catch(() => null);
+      setAlertMsg(
+        res.ok
+          ? { kind: 'success', text: body?.data?.message || 'Checagem concluída.' }
+          : { kind: 'error', text: body?.error?.message || 'Não foi possível rodar a checagem.' }
+      );
+    } catch {
+      setAlertMsg({ kind: 'error', text: 'Sem conexão com o servidor.' });
+    }
+    setAlertTesting(false);
   }
 
   const chip = (active: boolean, color = 'bg-indigo-600') =>
@@ -340,17 +377,21 @@ function SettingsForm({
             </div>
           </Card>
 
-          {/* Recovery */}
+          {/* Missões extras (recuperação + escalada, um conceito só) */}
           <Card>
             <CardHeader>
-              <CardTitle>🏆 Missões extras (recuperação)</CardTitle>
-              <CardDescription>Tarefas maiores que devolvem energia perdida com faltas.</CardDescription>
+              <CardTitle>🏆 Missões extras</CardTitle>
+              <CardDescription>
+                Tudo que o guardião faz além do combinado: uma tarefa grande que compensa uma falta,
+                uma gentileza, estudo. O próprio guardião registra pelo link dele, sem esperar
+                aprovação — tropeço continua sendo só dos adultos.
+              </CardDescription>
             </CardHeader>
             <div className="flex flex-wrap items-center gap-4">
-              <Toggle enabled={recoveryEnabled} setEnabled={setRecoveryEnabled} />
-              {recoveryEnabled && (
+              <Toggle enabled={extrasOn} setEnabled={setExtrasOn} />
+              {extrasOn && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm text-gray-500">Energia devolvida por missão extra:</span>
+                  <span className="text-sm text-gray-500">Energia devolvida ao compensar uma falta:</span>
                   {[1, 2, 3, 5].map((v) => (
                     <button key={v} onClick={() => setRecoveryValue(v)} className={chip(recoveryValue === v, 'bg-orange-500')}>
                       +{v}
@@ -370,13 +411,57 @@ function SettingsForm({
             <Toggle enabled={auxilioEnabled} setEnabled={setAuxilioEnabled} />
           </Card>
 
-          {/* Escalada */}
+          {/* Alerta de desempenho */}
           <Card>
             <CardHeader>
-              <CardTitle>⬆️ Escalada</CardTitle>
-              <CardDescription>Gentilezas, estudo e ir além. Energia extra, pode passar de 100.</CardDescription>
+              <CardTitle>📉 Aviso quando a energia cai</CardTitle>
+              <CardDescription>
+                Quando um guardião fica com a energia igual ou abaixo do limite, os adultos da casa
+                recebem um e-mail com o retrato da missão e o que dá para fazer — no app e em casa.
+                O guardião não recebe nada.
+              </CardDescription>
             </CardHeader>
-            <Toggle enabled={escaladaEnabled} setEnabled={setEscaladaEnabled} />
+            {!schemaHasAlerts && (
+              <Notice kind="warning" className="mb-3">
+                Estas opções ficam ativas depois de aplicar a migração 00010 (alertas) no Supabase.
+              </Notice>
+            )}
+            {alertMsg && <Notice kind={alertMsg.kind} className="mb-3">{alertMsg.text}</Notice>}
+            <div className="space-y-3">
+              <ToggleRow
+                enabled={alertsEnabled}
+                setEnabled={setAlertsEnabled}
+                disabled={!schemaHasAlerts}
+                title="Avisar por e-mail"
+                text="Um aviso por guardião a cada poucos dias, no máximo. Nunca vira spam."
+              />
+              <div className={cn('rounded-lg bg-gray-50 px-3 py-2.5', !schemaHasAlerts && 'opacity-60')}>
+                <p className="text-sm font-medium text-gray-900">Limite de energia</p>
+                <p className="mb-2 text-xs text-gray-500">
+                  Avisa quando a energia for igual ou menor que este valor.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {[50, 60, 70, 80].map((v) => (
+                    <button
+                      key={v}
+                      onClick={() => schemaHasAlerts && setAlertThreshold(v)}
+                      disabled={!schemaHasAlerts}
+                      className={chip(alertThreshold === v)}
+                    >
+                      {v}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" variant="secondary" onClick={handleAlertTest} loading={alertTesting}>
+                  Checar e enviar agora
+                </Button>
+                <span className="text-[11px] text-gray-500">
+                  Roda a checagem na hora — serve para conferir o SMTP.
+                </span>
+              </div>
+            </div>
           </Card>
         </>
       )}
@@ -396,7 +481,13 @@ function SettingsForm({
           {schemaHasRoles && (
             <div>
               <label className="text-xs font-medium text-gray-500">Como chamar</label>
-              <GenderSelect value={myGender} onChange={setMyGender} labels={myLabels} className="mt-1" />
+              <GenderSelect
+                value={myGender}
+                onChange={setMyGender}
+                labels={myLabels}
+                allowUnset={false}
+                className="mt-1"
+              />
             </div>
           )}
         </div>

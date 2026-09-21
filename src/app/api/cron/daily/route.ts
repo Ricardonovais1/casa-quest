@@ -3,13 +3,15 @@
 // GET /api/cron/daily   (Vercel Cron → Authorization: Bearer CRON_SECRET)
 //
 // Roda de madrugada para toda família com missão ativa: gera as ações
-// do dia, registra faltas do dia anterior e encerra missões vencidas.
+// do dia, registra faltas do dia anterior, encerra missões vencidas e
+// avisa os adultos quando algum guardião fica abaixo da meta de energia.
 // Também mantém o banco "acordado" (Supabase pausa projetos ociosos).
 // ============================================================
 
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/infrastructure/supabase/server';
 import { syncFamilyDay } from '@/lib/daily-actions';
+import { runPerformanceAlerts } from '@/lib/performance-alerts';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,13 +47,19 @@ export async function GET(request: Request) {
 
   const familyIds = Array.from(new Set((missions ?? []).map((m) => m.family_id)));
   const results = [];
+  let alertsSent = 0;
+
   for (const familyId of familyIds) {
     try {
-      results.push(await syncFamilyDay(db, familyId));
+      const sync = await syncFamilyDay(db, familyId);
+      // O aviso vem depois da varredura: a energia já conta as faltas de ontem.
+      const alerts = await runPerformanceAlerts(db, familyId, { request });
+      alertsSent += alerts.sent;
+      results.push({ ...sync, alerts });
     } catch (e) {
       results.push({ familyId, error: e instanceof Error ? e.message : String(e) });
     }
   }
 
-  return NextResponse.json({ data: { families: familyIds.length, results } });
+  return NextResponse.json({ data: { families: familyIds.length, alertsSent, results } });
 }

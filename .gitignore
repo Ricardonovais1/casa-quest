@@ -42,3 +42,6 @@ dev.log
 next-env.d.ts
 
 .vercel
+
+# cópias de segurança do banco (dados reais de famílias — repo é público)
+/backups/

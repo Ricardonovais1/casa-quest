@@ -9,10 +9,16 @@ const geistSans = Geist({
   subsets: ['latin'],
 });
 
+// Escala travada em 100%. O app é uma lista de toques com barra fixa
+// embaixo: o zoom que o iOS dava ao focar um campo empurrava o layout
+// para fora da tela e escondia a navegação. O tamanho mínimo de fonte
+// dos campos (globals.css) é a outra metade dessa correção.
 export const viewport: Viewport = {
   themeColor: '#6366f1',
   width: 'device-width',
   initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
   viewportFit: 'cover',
 };
 

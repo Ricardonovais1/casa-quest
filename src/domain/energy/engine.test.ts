@@ -94,12 +94,16 @@ describe('recurrencePenaltyRaw', () => {
     expect(recurrencePenaltyRaw(1)).toBe(1);
   });
 
-  it('k=2 → 3', () => {
-    expect(recurrencePenaltyRaw(2)).toBe(3);
+  it('k=2 → 2', () => {
+    expect(recurrencePenaltyRaw(2)).toBe(2);
   });
 
-  it('k=3 → 7', () => {
-    expect(recurrencePenaltyRaw(3)).toBe(7);
+  it('k=3 → 3', () => {
+    expect(recurrencePenaltyRaw(3)).toBe(3);
+  });
+
+  it('é linear, não exponencial — k=17 → 17, não 131071', () => {
+    expect(recurrencePenaltyRaw(17)).toBe(17);
   });
 
   it('throws for negative k', () => {
@@ -219,14 +223,13 @@ describe('computeEnergy', () => {
     ];
     const result = computeEnergy(sequences, 0, 0, defaultConfig);
     // primaryLoss: 2^1-1 + 2^1-1 = 1 + 1 = 2
-    // recurrence: k=2 → 2^2-1=3, weight 0.5 → 1.5
-    // totalLoss: 2 + 1.5 = 3.5
-    // netLoss: 3.5
-    // finalEnergy: 100 - 3.5 = 96.5
+    // recurrence: k=2 → 2, weight 0.5 → 1
+    // totalLoss: 2 + 1 = 3
+    // finalEnergy: 100 - 3 = 97
     expect(result.primaryLoss).toBe(2);
-    expect(result.recurrencePenalty).toBe(1.5);
-    expect(result.totalLoss).toBe(3.5);
-    expect(result.finalEnergy).toBe(96.5);
+    expect(result.recurrencePenalty).toBe(1);
+    expect(result.totalLoss).toBe(3);
+    expect(result.finalEnergy).toBe(97);
   });
 
   it('Três faltas consecutivas → penalidade primária = 7 (n=3)', () => {
@@ -248,19 +251,19 @@ describe('computeEnergy', () => {
     expect(result.finalEnergy).toBe(92.5);
   });
 
-  it('Duas sequências de 2 faltas cada → primária 3+3=6, reincidência k=2→3, peso 0.5→1.5; total 7.5', () => {
+  it('Duas sequências de 2 faltas cada → primária 3+3=6, reincidência k=2→2, peso 0.5→1; total 7', () => {
     const sequences = [
       makeSequence([date(2026, 1, 1), date(2026, 1, 2)], 'g1', 'm1', 't1'),
       makeSequence([date(2026, 1, 5), date(2026, 1, 6)], 'g1', 'm1', 't1'),
     ];
     const result = computeEnergy(sequences, 0, 0, defaultConfig);
     // primaryLoss: (2^2-1) + (2^2-1) = 3 + 3 = 6
-    // recurrence: k=2 → 2^2-1=3, weight 0.5 → 1.5
-    // totalLoss: 6 + 1.5 = 7.5
+    // recurrence: k=2 → 2, weight 0.5 → 1
+    // totalLoss: 6 + 1 = 7
     expect(result.primaryLoss).toBe(6);
-    expect(result.recurrencePenalty).toBe(1.5);
-    expect(result.totalLoss).toBe(7.5);
-    expect(result.finalEnergy).toBe(92.5);
+    expect(result.recurrencePenalty).toBe(1);
+    expect(result.totalLoss).toBe(7);
+    expect(result.finalEnergy).toBe(93);
   });
 
   it('Falta única isolada → penalidade primária = 1', () => {
@@ -269,7 +272,7 @@ describe('computeEnergy', () => {
     ];
     const result = computeEnergy(sequences, 0, 0, defaultConfig);
     expect(result.primaryLoss).toBe(1);
-    expect(result.recurrencePenalty).toBe(0.5); // k=1: (2^1-1)*0.5 = 0.5
+    expect(result.recurrencePenalty).toBe(0.5); // k=1: 1*0.5 = 0.5
     expect(result.totalLoss).toBe(1.5);
     expect(result.finalEnergy).toBe(98.5);
   });
@@ -359,9 +362,9 @@ describe('computeEnergy', () => {
     ];
     const result = computeEnergy(sequences, 0, 0, defaultConfig);
     // primaryLoss: 1+1+1 = 3
-    // recurrence: k=3 → 2^3-1=7, weight 0.5 → 3.5
+    // recurrence: k=3 → 3, weight 0.5 → 1.5
     expect(result.primaryLoss).toBe(3);
-    expect(result.recurrencePenalty).toBe(3.5);
+    expect(result.recurrencePenalty).toBe(1.5);
     expect(result.sequenceCount).toBe(3);
   });
 
@@ -372,9 +375,9 @@ describe('computeEnergy', () => {
     ];
     const config: EnergyConfig = { ...defaultConfig, recurrenceWeight: 1.0 };
     const result = computeEnergy(sequences, 0, 0, config);
-    // primaryLoss: 1+1=2, recurrence: (2^2-1)*1.0 = 3
-    expect(result.recurrencePenalty).toBe(3);
-    expect(result.totalLoss).toBe(5);
+    // primaryLoss: 1+1=2, recurrence: 2*1.0 = 2
+    expect(result.recurrencePenalty).toBe(2);
+    expect(result.totalLoss).toBe(4);
   });
 
   it('Custom recovery value', () => {
@@ -444,5 +447,62 @@ describe('getEnergyPercentage', () => {
 
   it('105 out of 100 → 105% (escalada)', () => {
     expect(getEnergyPercentage(105, 100)).toBe(105);
+  });
+});
+
+// ============================================================================
+// Reincidência: a curva tem de continuar limitada
+//
+// Estes testes existem por causa de um bug real: a reincidência era 2^k − 1,
+// com k = número de sequências de falta. Como cada falta isolada abre uma
+// sequência nova, k crescia com a QUANTIDADE de faltas, e o castigo dobrava
+// a cada uma. Uma família chegou a k=17 em nove dias — energia de −65478%.
+//
+// Se alguém tornar este termo exponencial de novo, estes testes quebram.
+// ============================================================================
+
+describe('recurrencePenalty — continua proporcional em k alto', () => {
+  const isolated = (k: number) =>
+    Array.from({ length: k }, (_, i) =>
+      makeSequence([date(2026, 1, 1 + i * 2)], 'g1', 'm1', `t${i}`)
+    );
+
+  it('k=10 custa 5, não 511.5', () => {
+    const r = computeEnergy(isolated(10), 0, 0, defaultConfig);
+    expect(r.recurrencePenalty).toBe(5);
+    expect(r.finalEnergy).toBe(85);
+  });
+
+  it('k=17 — o caso real — deixa a energia numa faixa utilizável', () => {
+    const r = computeEnergy(isolated(17), 0, 0, defaultConfig);
+    expect(r.recurrencePenalty).toBe(8.5);
+    expect(getEnergyPercentage(r.finalEnergy, 100)).toBe(75);
+  });
+
+  it('cada sequência a mais custa sempre o mesmo — nunca dobra', () => {
+    const steps = [8, 9, 10, 11, 12].map(
+      (k) => computeEnergy(isolated(k), 0, 0, defaultConfig).recurrencePenalty
+    );
+    const deltas = steps.slice(1).map((v, i) => v - steps[i]!);
+    expect(deltas).toEqual([0.5, 0.5, 0.5, 0.5]);
+  });
+
+  it('a energia nunca cai a um absurdo só por faltas isoladas', () => {
+    const r = computeEnergy(isolated(30), 0, 0, defaultConfig);
+    // 30 faltas isoladas: 30 de perda primária + 15 de reincidência.
+    expect(r.finalEnergy).toBe(55);
+  });
+
+  it('faltas SEGUIDAS continuam pesando exponencialmente — a regra que importa', () => {
+    const streak = [makeSequence(
+      Array.from({ length: 5 }, (_, i) => date(2026, 1, 1 + i)), 'g1', 'm1', 't1'
+    )];
+    const scattered = isolated(5);
+    const s5 = computeEnergy(streak, 0, 0, defaultConfig);
+    const i5 = computeEnergy(scattered, 0, 0, defaultConfig);
+    // Mesmas 5 faltas: seguidas custam 31.5, espalhadas custam 7.5.
+    expect(s5.totalLoss).toBe(31.5);
+    expect(i5.totalLoss).toBe(7.5);
+    expect(s5.totalLoss).toBeGreaterThan(i5.totalLoss);
   });
 });

@@ -7,6 +7,7 @@
 // ============================================================
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { roleOf } from './roles';
 
 export interface TokenGuardian {
   id: string;
@@ -34,6 +35,10 @@ export async function hashGuardianToken(token: string): Promise<string> {
  * Resolve an access token to its guardian.
  * Requires a service-role client: the caller has no Supabase session, so RLS
  * cannot identify them — the token itself is the credential.
+ *
+ * DECISION (2026-09-20): o convite do conselheiro usa estas mesmas colunas
+ * (ver `lib/advisor-invite`), então aqui só passa CRIANÇA. Sem isso, o link
+ * de convite de um adulto abriria a tela de guardião da linha dele.
  */
 export async function resolveGuardianToken(
   supabase: SupabaseClient,
@@ -43,12 +48,12 @@ export async function resolveGuardianToken(
 
   const { data: guardian, error } = await supabase
     .from('guardians')
-    .select('id, name, family_id, token_expires_at')
+    .select('id, name, family_id, token_expires_at, role, is_mor')
     .eq('access_token_hash', tokenHash)
     .eq('is_active', true)
-    .single();
+    .maybeSingle();
 
-  if (error || !guardian) {
+  if (error || !guardian || roleOf(guardian) !== 'guardiao') {
     return { ok: false, reason: 'not_found' };
   }
 

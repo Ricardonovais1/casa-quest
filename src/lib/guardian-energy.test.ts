@@ -44,3 +44,38 @@ describe('computeStreakDays', () => {
     expect(computeStreakDays([], ancient, today)).toBe(365);
   });
 });
+
+// ============================================================
+// Casa Quest — Tests: janela móvel da energia
+// ============================================================
+
+import { energyWindowStart, ENERGY_WINDOW_DAYS } from './guardian-energy';
+
+const TZ = 'America/Sao_Paulo';
+const day = (at: Date) => at.toISOString().split('T')[0];
+
+describe('energyWindowStart', () => {
+  const today = d('2026-09-10');
+
+  it('counts back ENERGY_WINDOW_DAYS from today, today included', () => {
+    expect(ENERGY_WINDOW_DAYS).toBe(30);
+    // 30 days ending on the 10th → starts on 12 Aug.
+    expect(day(energyWindowStart(d('2026-01-01'), today, TZ))).toBe('2026-08-12');
+  });
+
+  it('never starts before the mission did', () => {
+    expect(day(energyWindowStart(d('2026-09-08'), today, TZ))).toBe('2026-09-08');
+  });
+
+  it('is today for a mission that starts today', () => {
+    expect(day(energyWindowStart(today, today, TZ))).toBe('2026-09-10');
+  });
+
+  it('honours a custom window length', () => {
+    expect(day(energyWindowStart(d('2026-01-01'), today, TZ, 7))).toBe('2026-09-04');
+  });
+
+  it('treats a zero or negative window as a single day', () => {
+    expect(day(energyWindowStart(d('2026-01-01'), today, TZ, 0))).toBe('2026-09-10');
+  });
+});

@@ -2,6 +2,10 @@
 
 // ============================================================
 // Casa Quest — Dashboard: Guardiões (crianças e adolescentes)
+//
+// Tela de cadastro, chegada pelo botão "Gerenciar guardiões" em
+// Família — o menu não tem entrada própria para ela. O dia a dia de
+// cada guardião (hoje, distribuição, energia, link) mora lá.
 // ============================================================
 
 import { useState } from 'react';
@@ -102,6 +106,10 @@ export default function GuardiansPage() {
 
   return (
     <div className="space-y-6">
+      <Link href="/dashboard/familia" className="inline-block text-xs font-medium text-gray-500 hover:text-gray-800">
+        ← Voltar para Família
+      </Link>
+
       <PageHeader
         title="Guardiões"
         subtitle={`${kids.length} guardiã${kids.length === 1 ? 'o' : 'es'} na família · crianças e adolescentes que entram por link`}

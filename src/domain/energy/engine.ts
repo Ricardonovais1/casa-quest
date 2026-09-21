@@ -39,22 +39,32 @@ export function sequenceEnergy(n: number): number {
 }
 
 /**
- * Calculate recurrence penalty: R(k) = 2^k - 1
+ * Calculate recurrence penalty: R(k) = k
  *
  * k = number of distinct absence sequences within a mission.
  * Having sequences in multiple action types (e.g., bed AND dishes)
  * is worse than having them all in one area — it shows scattered neglect.
+ * Each extra sequence adds a fixed amount; the weight parameter
+ * (default 0.5) controls how much.
  *
- * The weight parameter (default 0.5) controls how much this contributes.
+ * DECISION (2026-09-11): this term used to be 2^k − 1, mirroring
+ * sequenceEnergy. That was a mistake, and a costly one. Unlike n, which
+ * measures how long a single streak of neglect ran, k grows with the NUMBER
+ * of misses — every isolated miss opens a new sequence — so the penalty
+ * doubled with each miss, without ceiling and without ever expiring. A real
+ * family hit k=17 in nine days: a penalty of 65535 on a scale of 100, energy
+ * at −65478%, the reward pinned to the bottom tier, and no arithmetic path
+ * back (recovery is +2 per action against a term that doubles).
+ *
+ * Consecutive neglect is already punished exponentially, by sequenceEnergy.
+ * This term only measures breadth, so it stays linear. Do not make it
+ * exponential again — see the tests that pin this.
  */
 export function recurrencePenaltyRaw(k: number): number {
   if (k < 0) {
     throw new Error(`recurrencePenalty: k must be >= 0, got ${k}`);
   }
-  if (k > 53) {
-    throw new Error(`recurrencePenalty: k too large (${k}), max 53`);
-  }
-  return Math.pow(2, k) - 1;
+  return k;
 }
 
 // ============================================================================

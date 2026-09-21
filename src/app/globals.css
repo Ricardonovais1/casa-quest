@@ -28,7 +28,9 @@
 html {
   scroll-behavior: smooth;
   -webkit-tap-highlight-color: transparent;
+  /* O navegador não reescala o texto sozinho: a página vale 100%, só. */
   -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -38,6 +40,22 @@ body {
   /* PWA safe areas */
   padding: env(safe-area-inset-top) env(safe-area-inset-right)
     env(safe-area-inset-bottom) env(safe-area-inset-left);
+  /* Nada de rolagem lateral: um card largo demais escondia a barra de
+     navegação de baixo e quebrava a rolagem vertical. O navegador
+     propaga isto para a viewport, então `position: sticky` continua
+     funcionando na barra lateral. */
+  overflow-x: hidden;
+}
+
+/* Campo com fonte menor que 16px faz o iOS dar zoom ao focar — era o
+   "bug de zoom" das telas de Família e Guardiões. Os controles crescem
+   no celular; no desktop a tipografia miúda continua. */
+@media (max-width: 640px) {
+  input:not([type='checkbox']):not([type='radio']),
+  select,
+  textarea {
+    font-size: 16px;
+  }
 }
 
 /* Custom scrollbar */

@@ -1,24 +1,53 @@
 // ============================================================
 // Casa Quest — API: Adultos da casa (Conselheiros)
+// GET  /api/families/adults          → adultos + em que pé está o convite
 // POST /api/families/adults  { name, email, gender? }
 //
-// Convida um segundo adulto. Se o e-mail já tem conta no Casa Quest,
-// liga na hora; senão, o Supabase manda um convite e a pessoa define a
-// senha em /convite. Só quem gerencia a casa convida.
+// Convida um segundo adulto. Se o e-mail já tem conta USÁVEL no Casa Quest,
+// liga na hora; senão manda o convite (SMTP da casa, ou o envio embutido do
+// Supabase) e devolve o link de aceite como plano B.
+//
+// Convidar de novo alguém que já está na família não é erro: é reenvio.
+// Só quem gerencia a casa convida.
 // ============================================================
 
 import { NextResponse } from 'next/server';
 import { requireAdult, apiError } from '@/lib/require-mor';
-
-function baseUrl(request: Request): string {
-  const env = process.env.NEXT_PUBLIC_APP_URL;
-  if (env && !/^https?:\/\/localhost\b/i.test(env)) return env.replace(/\/+$/, '');
-  const proto = request.headers.get('x-forwarded-proto') || 'http';
-  const host = request.headers.get('x-forwarded-host') || request.headers.get('host');
-  return host ? `${proto}://${host}` : env || 'http://localhost:3000';
-}
+import { appUrl } from '@/lib/app-url';
+import { deliverAdvisorInvite, inviteMessage, inviteStateOf } from '@/lib/advisor-invite';
+import { roleOf } from '@/lib/roles';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Adultos da casa com o estado real do convite de cada um. */
+export async function GET() {
+  const auth = await requireAdult();
+  if (!auth.ok) return auth.response;
+  const { db, me } = auth.ctx;
+
+  const { data: rows } = await db
+    .from('guardians')
+    .select('*')
+    .eq('family_id', me.family_id)
+    .eq('is_active', true);
+
+  const adults = (rows ?? []).filter((g) => roleOf(g) !== 'guardiao');
+
+  // O estado do convite sai da própria linha do guardião (token em aberto
+  // vs. vínculo já feito), não de auth.users — ver `lib/advisor-invite`.
+  return NextResponse.json({
+    data: {
+      adults: adults.map((g) => ({
+        id: g.id,
+        name: g.name,
+        email: g.email,
+        role: roleOf(g),
+        inviteState: inviteStateOf(g),
+        invitedAt: g.token_expires_at ?? null,
+      })),
+    },
+  });
+}
 
 export async function POST(request: Request) {
   const auth = await requireAdult({ manage: true });
@@ -39,67 +68,67 @@ export async function POST(request: Request) {
   // One family per e-mail (guardians.email is unique).
   const { data: existing } = await db
     .from('guardians')
-    .select('id, family_id')
+    .select('id, family_id, name, email, gender, user_id, role, is_mor, access_token_hash, token_expires_at')
     .eq('email', email)
     .maybeSingle();
   if (existing && existing.family_id !== me.family_id) {
     return apiError('EMAIL_TAKEN', 'Este e-mail já pertence a outra família no Casa Quest.', 409);
   }
-  if (existing) {
-    return apiError('ALREADY_MEMBER', 'Esta pessoa já faz parte da sua família.', 409);
-  }
 
-  // Already has an account? Link immediately, no e-mail needed.
-  let userId: string | null = null;
-  let invited = false;
-  const { data: users } = await db.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  const match = users?.users.find((u) => u.email?.toLowerCase() === email);
-  if (match) {
-    userId = match.id;
-  } else {
-    const { data: invite, error: inviteError } = await db.auth.admin.inviteUserByEmail(email, {
-      redirectTo: `${baseUrl(request)}/convite`,
-      data: { full_name: name, role: 'conselheiro' },
-    });
-    if (inviteError) {
-      return apiError('INVITE_FAILED', `Não foi possível enviar o convite: ${inviteError.message}`, 500);
+  const { data: family } = await db
+    .from('families')
+    .select('name')
+    .eq('id', me.family_id)
+    .maybeSingle();
+  const familyName = family?.name ?? 'sua família';
+
+  // A linha tem de existir ANTES do convite: o token de aceite é gravado
+  // nela. Já estar na família não é erro — é reenvio.
+  let advisor = existing;
+  if (!advisor) {
+    const { data: row, error } = await db
+      .from('guardians')
+      .insert({
+        family_id: me.family_id,
+        name,
+        email,
+        is_mor: false,
+        role: 'conselheiro',
+        gender,
+        is_active: true,
+      })
+      .select('id, family_id, name, email, gender, user_id, role, is_mor, access_token_hash, token_expires_at')
+      .single();
+
+    if (error) {
+      if (/column .*role|column .*gender/i.test(error.message)) {
+        return apiError('MIGRATION_REQUIRED', 'Aplique a migração 00008 (papéis) antes de convidar adultos.', 500);
+      }
+      return apiError('DB_ERROR', error.message, 500);
     }
-    userId = invite.user?.id ?? null;
-    invited = true;
+    advisor = row;
   }
 
-  const { data: row, error } = await db
-    .from('guardians')
-    .insert({
-      family_id: me.family_id,
-      name,
-      email,
-      user_id: userId,
-      is_mor: false,
-      role: 'conselheiro',
-      gender,
-      is_active: true,
-    })
-    .select('id')
-    .single();
-
-  if (error) {
-    if (/column .*role|column .*gender/i.test(error.message)) {
-      return apiError('MIGRATION_REQUIRED', 'Aplique a migração 00008 (papéis) antes de convidar adultos.', 500);
-    }
-    return apiError('DB_ERROR', error.message, 500);
-  }
+  const delivery = await deliverAdvisorInvite(db, {
+    advisor: { ...advisor, email },
+    inviterName: me.name,
+    familyName,
+    baseUrl: appUrl(request),
+  });
 
   return NextResponse.json(
     {
       data: {
-        id: row.id,
-        invited,
-        message: invited
-          ? `Convite enviado para ${email}. A pessoa define a senha pelo link do e-mail.`
-          : `${name} já tinha conta no Casa Quest e agora faz parte da família. Basta entrar com o e-mail e a senha de sempre.`,
+        id: advisor.id,
+        resent: !!existing,
+        invited: delivery.channel === 'sent',
+        channel: delivery.channel,
+        inviteState: delivery.state,
+        message: inviteMessage(delivery, advisor.name ?? name, email),
+        inviteUrl: delivery.inviteUrl,
+        ...(delivery.channel === 'not_sent' ? { emailError: delivery.reason } : {}),
       },
     },
-    { status: 201 }
+    { status: existing ? 200 : 201 }
   );
 }

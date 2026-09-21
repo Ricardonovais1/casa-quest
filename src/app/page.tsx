@@ -134,8 +134,17 @@ export default function HomePage() {
         </div>
       </section>
 
-      <footer className="py-6 text-center text-xs text-gray-400">
-        Casa Quest · feito por uma família, para famílias.
+      <footer className="flex flex-col items-center gap-2 py-6 text-center text-xs text-gray-400">
+        <p>Casa Quest · feito por uma família, para famílias.</p>
+        <p className="flex items-center gap-3">
+          <Link href="/termos" className="hover:text-gray-600">
+            Termos de Uso
+          </Link>
+          <span aria-hidden>·</span>
+          <Link href="/privacidade" className="hover:text-gray-600">
+            Privacidade
+          </Link>
+        </p>
       </footer>
     </main>
   );

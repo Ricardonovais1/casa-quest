@@ -4,6 +4,8 @@
 // Casa Quest — Dashboard: Missões
 // Criar, editar, iniciar, encerrar e cancelar missões (períodos de
 // mesada). A mesada-alvo é da missão e pode ser ajustada por guardião.
+// O que já acabou (concluída, cancelada) fica recolhido no fim, com só
+// o nome e a tag de status — a tela é sobre o que está valendo agora.
 // ============================================================
 
 import { useState, useEffect, useCallback } from 'react';
@@ -12,6 +14,7 @@ import { getSupabaseBrowserClient } from '@/infrastructure/supabase/client';
 import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageHeader, EmptyState, Notice, PageSkeleton, inputClass } from '@/components/ui/page';
+import { Collapsible, CollapsibleRow } from '@/components/ui/collapsible';
 import { formatDate, formatCurrency, cn } from '@/lib/utils';
 import { localDateString, addDays } from '@/lib/day-range';
 
@@ -93,6 +96,11 @@ export default function MissionsPage() {
   }, [family, loadMissions]);
 
   const activeMission = missions.find((m) => m.status === 'active');
+  // O que está valendo fica aberto; o que acabou vai para o recolhível.
+  const openMissions = missions.filter((m) => m.status === 'draft' || m.status === 'active');
+  const closedMissions = missions.filter(
+    (m) => m.status === 'completed' || m.status === 'cancelled'
+  );
 
   function openForm() {
     const start = today;
@@ -298,7 +306,12 @@ export default function MissionsPage() {
         />
       ) : (
         <div className="space-y-3">
-          {missions.map((m) => {
+          {openMissions.length === 0 && (
+            <Notice kind="info">
+              Nenhuma missão em andamento. As missões encerradas estão logo abaixo.
+            </Notice>
+          )}
+          {openMissions.map((m) => {
             const total = daysBetween(m.start_at, m.end_at);
             const day = Math.min(total, Math.max(0, daysBetween(m.start_at, today)));
             const myRows = mgRows.filter((r) => r.mission_id === m.id);
@@ -450,6 +463,55 @@ export default function MissionsPage() {
               </Card>
             );
           })}
+
+          {/* Encerradas: recolhidas, só nome e tag */}
+          {closedMissions.length > 0 && (
+            <Collapsible
+              title="Missões encerradas"
+              count={closedMissions.length}
+              description="Concluídas e canceladas. Abra uma para ver o resultado."
+            >
+              {closedMissions.map((m) => {
+                const rows = mgRows.filter((r) => r.mission_id === m.id);
+                return (
+                  <CollapsibleRow
+                    key={m.id}
+                    title={m.name}
+                    badge={<StatusBadge status={m.status} />}
+                  >
+                    <p className="text-xs text-gray-500">
+                      {formatDate(m.start_at)} a {formatDate(m.end_at)} ·{' '}
+                      {daysBetween(m.start_at, m.end_at)} dias
+                    </p>
+                    {m.status === 'completed' && rows.length > 0 && (
+                      <div className="mt-2 divide-y divide-gray-100 rounded-lg bg-gray-50 px-3">
+                        {rows.map((r) => {
+                          const g = allKids.find((k) => k.id === r.guardian_id);
+                          if (!g) return null;
+                          return (
+                            <div key={r.guardian_id} className="flex items-center justify-between py-1.5 text-sm">
+                              <span className="text-gray-800">🦸 {g.name}</span>
+                              <span className="text-xs text-gray-500">
+                                energia {r.final_energy != null ? Math.round(Number(r.final_energy)) : '—'}
+                                {canSeeMoney && (
+                                  <>
+                                    {' · '}
+                                    <strong className="text-gray-900">
+                                      {r.final_reward != null ? formatCurrency(Number(r.final_reward)) : '—'}
+                                    </strong>
+                                  </>
+                                )}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </CollapsibleRow>
+                );
+              })}
+            </Collapsible>
+          )}
         </div>
       )}
     </div>

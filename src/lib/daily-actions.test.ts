@@ -170,3 +170,73 @@ describe('dayEndOf', () => {
     expect(dayEndOf({})).toBe('22:00');
   });
 });
+
+// ============================================================
+// Casa Quest — Tests: o dia 1 da missão não gera falta
+//
+// As ações do primeiro dia nascem junto com a missão, muitas vezes com o dia
+// já adiantado. Numa família real isso rendeu 17 faltas antes de qualquer
+// criança ter tido chance de fazer alguma coisa.
+// ============================================================
+
+import { sweepOverdueActions } from './daily-actions';
+
+type FakeRow = { id: string; due_at: string; created_at: string };
+
+/** Minimal stand-in for the PostgREST builder used by sweepOverdueActions. */
+function fakeDb(pending: FakeRow[]) {
+  const swept: string[] = [];
+  const from = () => {
+    let mode: 'select' | 'update' = 'select';
+    let id: string | null = null;
+    const self = {
+      select: () => self,
+      update: () => { mode = 'update'; return self; },
+      eq: (col: string, val: string) => { if (col === 'id') id = val; return self; },
+      lt: () => self,
+      then: (resolve: (v: unknown) => unknown) => {
+        if (mode === 'update') { if (id) swept.push(id); return resolve({ error: null }); }
+        return resolve({
+          data: pending.map((p) => ({ ...p, action_templates: { default_due_time: '20:00' } })),
+        });
+      },
+    };
+    return self;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return { db: { from } as any, swept };
+}
+
+describe('sweepOverdueActions — isenção do primeiro dia', () => {
+  const TZ = 'America/Sao_Paulo';
+  const now = new Date('2026-09-05T12:00:00.000Z');
+  // 20:00 em São Paulo, dia 2 e dia 3.
+  const day1: FakeRow = { id: 'a1', due_at: '2026-09-02T23:00:00.000Z', created_at: '2026-09-02T18:00:00.000Z' };
+  const day2: FakeRow = { id: 'a2', due_at: '2026-09-03T23:00:00.000Z', created_at: '2026-09-03T03:00:00.000Z' };
+
+  it('sem a isenção, a ação do dia 1 vira falta', async () => {
+    const { db, swept } = fakeDb([day1]);
+    expect(await sweepOverdueActions(db, 'm1', 30, now)).toBe(1);
+    expect(swept).toEqual(['a1']);
+  });
+
+  it('com a isenção, a ação do dia 1 não vira falta', async () => {
+    const { db, swept } = fakeDb([day1]);
+    const n = await sweepOverdueActions(db, 'm1', 30, now, {
+      missionStart: '2026-09-02',
+      timeZone: TZ,
+    });
+    expect(n).toBe(0);
+    expect(swept).toEqual([]);
+  });
+
+  it('a isenção vale só para o primeiro dia — o dia 2 segue contando', async () => {
+    const { db, swept } = fakeDb([day1, day2]);
+    const n = await sweepOverdueActions(db, 'm1', 30, now, {
+      missionStart: '2026-09-02',
+      timeZone: TZ,
+    });
+    expect(n).toBe(1);
+    expect(swept).toEqual(['a2']);
+  });
+});
