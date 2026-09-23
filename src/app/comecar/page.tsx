@@ -270,8 +270,8 @@ export default function ComecarPage() {
 
             <CtaButton className="mt-8 w-full" />
             <p className="mt-4 text-center text-xs text-gray-500">
-              Nada é cobrado sem você aceitar. Se ao fim da missão a casa não estiver mais leve, você
-              não paga nada. E, se assinar, tem 7 dias para desistir e receber o valor de volta.
+              Em {DIAS_GRATIS} dias, a casa fica mais leve: cada filho sabe o que é dele, a educação
+              doméstica vira rotina, e sobra mais tempo para conversar do que para cobrar.
             </p>
           </div>
         </div>
@@ -303,7 +303,9 @@ export default function ComecarPage() {
               usam a Casa Quest apenas pelo acompanhamento da constância.
             </Faq>
             <Faq question="Posso cancelar quando quiser?">
-              Sim, a qualquer momento e sem multa. O acesso continua até o fim do período já pago.
+              Sim, a qualquer momento e sem multa. O acesso continua até o fim do período já pago. E,
+              como manda o Código de Defesa do Consumidor, você tem 7 dias após a compra para se
+              arrepender.
             </Faq>
             <Faq question="E os dados dos meus filhos?">
               A criança não cria conta e não informa e-mail nem telefone. Tudo o que guardamos e por
