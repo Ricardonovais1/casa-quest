@@ -9,6 +9,7 @@ import {
   buildExtraActionRow,
   categoriesForKind,
   effectOfCategory,
+  effectOfKind,
   escaladaPointsOf,
   extrasEnabled,
   kindOfCategory,
@@ -157,9 +158,23 @@ describe('extrasEnabled', () => {
   });
 });
 
+describe('colaboração', () => {
+  it('soma energia como escalada, só para ações de colaboração', () => {
+    expect(effectOfKind('cooperacao', 'colaboracao')).toBe('escalada');
+    expect(effectOfKind('gentilezas', 'colaboracao')).toBeNull();
+    expect(effectOfKind('cooperacao', 'extra')).toBeNull();
+    expect(effectOfKind('missoes', 'extra')).toBe('recovery');
+  });
+
+  it('não vira categoria de extra (o dia continua gerando colaboração)', () => {
+    expect(ALL_EXTRA_CATEGORIES).not.toContain('cooperacao');
+    expect(categoriesForKind('colaboracao')).toEqual(['cooperacao']);
+  });
+});
+
 describe('catálogo de tipos', () => {
-  it('o formulário oferece dois tipos, e só tropeço é de adulto', () => {
-    expect(EXTRA_KIND_META.map((k) => k.value)).toEqual(['tropeco', 'extra']);
+  it('o formulário oferece três tipos, e só tropeço é de adulto', () => {
+    expect(EXTRA_KIND_META.map((k) => k.value)).toEqual(['tropeco', 'extra', 'colaboracao']);
     expect(EXTRA_KIND_META.find((k) => k.value === 'tropeco')!.adultsOnly).toBe(true);
     expect(EXTRA_KIND_META.find((k) => k.value === 'extra')!.adultsOnly).toBe(false);
   });

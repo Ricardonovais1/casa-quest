@@ -26,6 +26,7 @@ import { localDayRangeUtc, localTimeString, friendlyDate } from '@/lib/day-range
 import { categoryMeta } from '@/lib/default-actions';
 import {
   ALL_EXTRA_CATEGORIES,
+  COLABORACAO_CATEGORIES,
   EXTRA_KIND_META,
   categoriesForKind,
   type ExtraKind,
@@ -188,7 +189,7 @@ export default function TodayPage() {
       .select('id, name, category, points')
       .eq('family_id', family.id)
       .eq('is_active', true)
-      .in('category', ALL_EXTRA_CATEGORIES)
+      .in('category', [...ALL_EXTRA_CATEGORIES, ...COLABORACAO_CATEGORIES])
       .order('name');
     setTemplates((extras ?? []) as ExtraTemplate[]);
 
@@ -439,7 +440,7 @@ export default function TodayPage() {
             <CardHeader>
               <CardTitle>➕ Registrar um evento extra</CardTitle>
               <CardDescription>
-                Tropeços e missões extras não têm horário — você registra quando acontecem.
+                Tropeços, missões extras e colaborações não têm horário — você registra quando acontecem.
                 Os guardiões também registram as próprias missões extras pelo link deles.
               </CardDescription>
             </CardHeader>
@@ -459,7 +460,7 @@ export default function TodayPage() {
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-500">Tipo</label>
-                <div className="mt-1 grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1">
+                <div className="mt-1 grid grid-cols-3 gap-1 rounded-lg bg-gray-100 p-1">
                   {EXTRA_KIND_META.map((k) => (
                     <button
                       key={k.value}

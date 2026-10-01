@@ -132,8 +132,6 @@ export default function ActionsPage() {
   const [dismissedPairs, setDismissedPairs] = useState<Set<string>>(new Set());
   const [merge, setMerge] = useState<{ keepId: string; mergeId: string } | null>(null);
   /** Id da ação cujo nome fica, ou 'custom' para um nome novo. */
-  const [mergeNameSource, setMergeNameSource] = useState('custom');
-  const [mergeCustomName, setMergeCustomName] = useState('');
   /** Registros no histórico de cada uma das duas (feitos, perdidos e pendentes). */
   const [mergeUsage, setMergeUsage] = useState<Record<string, number>>({});
   /** Nome de quem está com cada atividade de colaboração nesta rodada. */
@@ -151,8 +149,7 @@ export default function ActionsPage() {
 
   const mergeKeep = merge ? byId.get(merge.keepId) : undefined;
   const mergeOut = merge ? byId.get(merge.mergeId) : undefined;
-  const mergeName =
-    mergeNameSource === 'custom' ? mergeCustomName.trim() : (byId.get(mergeNameSource)?.name ?? '');
+  const mergeName = mergeKeep?.name ?? '';
   const editing = editingId ? byId.get(editingId) : undefined;
   const mergeTargets = editing
     ? templates.filter((t) => t.id !== editing.id && canMerge(t, editing))
@@ -243,8 +240,6 @@ export default function ActionsPage() {
     resetForm();
     setShowSuggestions(false);
     setMerge({ keepId, mergeId });
-    setMergeNameSource(keepId);
-    setMergeCustomName('');
     setMergeUsage({});
     // O tamanho do histórico e quem está com cada uma: a decisão precisa ser concreta.
     for (const id of [keepId, mergeId]) {
@@ -497,13 +492,13 @@ export default function ActionsPage() {
           <CardHeader>
             <CardTitle>🔀 Fundir ações</CardTitle>
             <CardDescription>
-              As duas viram uma ação só, com o histórico das duas. Escolha qual configuração fica valendo e com que nome.
+              As duas viram uma ação só, com o histórico das duas. Escolha qual fica: o nome, a categoria, os pontos, a frequência e o horário são os dela.
             </CardDescription>
           </CardHeader>
           <div className="space-y-4">
             <div>
               <p className="text-xs font-medium text-gray-500">
-                Qual fica valendo? (categoria, pontos, frequência e horário)
+                Qual fica?
               </p>
               <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
                 {[mergeKeep, mergeOut].map((t) => {
@@ -539,47 +534,6 @@ export default function ActionsPage() {
                     </button>
                   );
                 })}
-              </div>
-            </div>
-
-            <div>
-              <p className="text-xs font-medium text-gray-500">Nome que fica</p>
-              <div className="mt-1.5 space-y-1.5">
-                {[mergeKeep, mergeOut].map((t) => (
-                  <label key={t.id} className="flex cursor-pointer items-center gap-2 text-sm text-gray-800">
-                    <input
-                      type="radio"
-                      name="merge-name"
-                      checked={mergeNameSource === t.id}
-                      onChange={() => setMergeNameSource(t.id)}
-                      className="h-4 w-4 border-gray-300 text-indigo-600"
-                    />
-                    {t.name}
-                  </label>
-                ))}
-                <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-800">
-                  <input
-                    type="radio"
-                    name="merge-name"
-                    checked={mergeNameSource === 'custom'}
-                    onChange={() => setMergeNameSource('custom')}
-                    className="h-4 w-4 border-gray-300 text-indigo-600"
-                  />
-                  Outro nome
-                </label>
-                {mergeNameSource === 'custom' && (
-                  <div className="pl-6">
-                    <input
-                      type="text"
-                      value={mergeCustomName}
-                      onChange={(e) => setMergeCustomName(e.target.value)}
-                      placeholder="Ex: Lava-louça"
-                      maxLength={120}
-                      autoFocus
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                    />
-                  </div>
-                )}
               </div>
             </div>
 

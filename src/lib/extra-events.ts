@@ -23,7 +23,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export type ExtraEffect = 'tropeco' | 'recovery' | 'escalada';
 
 /** O que o formulário oferece. */
-export type ExtraKind = 'tropeco' | 'extra';
+export type ExtraKind = 'tropeco' | 'extra' | 'colaboracao';
 
 export const TROPECO_CATEGORIES = ['tropecos'] as const;
 /** Compensam uma falta: devolvem a energia perdida. */
@@ -34,6 +34,13 @@ export const ESCALADA_CATEGORIES = [
   'autoaperfeicoamento',
   'rendimento_escolar',
 ] as const;
+
+/**
+ * Colaboração além da própria rodada (ajudou com a louça de outro). A
+ * categoria continua sendo gerada pelo dia, então fica fora das listas
+ * de "extra" abaixo: só o formulário a oferece, e soma energia como escalada.
+ */
+export const COLABORACAO_CATEGORIES = ['cooperacao'] as const;
 
 /** Tudo que entra em "missão extra" — o conceito unificado. */
 export const EXTRA_EVENT_CATEGORIES: string[] = [
@@ -69,7 +76,23 @@ export const EXTRA_KIND_META: {
     help: 'Fez além do combinado — uma tarefa grande, uma gentileza, estudo. Compensa faltas ou soma energia extra.',
     adultsOnly: false,
   },
+  {
+    value: 'colaboracao',
+    label: 'Colaboração',
+    emoji: '🤝',
+    help: 'Ajudou a casa além da sua parte — louça, mesa, lixo, pet. Soma energia extra.',
+    adultsOnly: false,
+  },
 ];
+
+/** Efeito de um registro: a colaboração soma energia como uma escalada. */
+export function effectOfKind(category: string, kind: ExtraKind): ExtraEffect | null {
+  if (kind === 'colaboracao') {
+    return (COLABORACAO_CATEGORIES as readonly string[]).includes(category) ? 'escalada' : null;
+  }
+  const effect = effectOfCategory(category);
+  return effect && kindOfCategory(category) === kind ? effect : null;
+}
 
 /** Efeito de uma categoria de ação. null quando ela não é um evento extra. */
 export function effectOfCategory(category: string): ExtraEffect | null {
@@ -87,6 +110,7 @@ export function kindOfCategory(category: string): ExtraKind | null {
 }
 
 export function categoriesForKind(kind: ExtraKind): string[] {
+  if (kind === 'colaboracao') return [...COLABORACAO_CATEGORIES];
   return kind === 'tropeco' ? [...TROPECO_CATEGORIES] : EXTRA_EVENT_CATEGORIES;
 }
 
@@ -96,6 +120,7 @@ export function categoriesForKind(kind: ExtraKind): string[] {
  */
 export function normalizeKind(raw: unknown): ExtraKind | null {
   if (raw === 'tropeco') return 'tropeco';
+  if (raw === 'colaboracao') return 'colaboracao';
   if (raw === 'extra' || raw === 'recovery' || raw === 'escalada') return 'extra';
   return null;
 }
@@ -264,8 +289,8 @@ export async function registerExtraEvent(
     return { ok: false, code: 'NO_MISSION', message: 'Inicie uma missão antes de registrar eventos' };
   }
 
-  const effect = effectOfCategory(template.category);
-  if (!effect || kindOfCategory(template.category) !== input.kind) {
+  const effect = effectOfKind(template.category, input.kind);
+  if (!effect) {
     return { ok: false, code: 'VALIDATION_ERROR', message: 'Essa ação não é desse tipo' };
   }
 
