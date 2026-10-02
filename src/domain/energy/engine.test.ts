@@ -427,6 +427,11 @@ describe('getQualitativeState', () => {
     expect(state.state).toBe('critical');
   });
 
+  it('label follows the displayed (rounded) percentage: 89.5 shows 90, so excellent', () => {
+    expect(getQualitativeState(89.5, 100).state).toBe('excellent');
+    expect(getQualitativeState(89.4, 100).state).toBe('good');
+  });
+
   it('exactly 100 → excellent', () => {
     expect(getQualitativeState(100, 100).state).toBe('excellent');
   });

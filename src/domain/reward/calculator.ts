@@ -4,33 +4,39 @@
 // NEVER shown to guardians — Mor's administrative view only.
 // ============================================================
 
-import type { RewardResult, RewardTier, RewardConfig } from './types';
-import { DEFAULT_REWARD_TIERS } from './types';
+import type { RewardResult, RewardConfig } from './types';
+import { MIN_REWARD_PERCENT } from './types';
 
 const DEFAULT_CONFIG: RewardConfig = {
-  tiers: DEFAULT_REWARD_TIERS,
+  minRewardPercent: MIN_REWARD_PERCENT,
   cooperationBonusPercent: 2, // 2% bonus per 10 cooperation points
 };
+
+const round1 = (n: number) => Math.round(n * 10) / 10;
 
 // ============================================================================
 // Core Functions
 // ============================================================================
 
 /**
- * Find the matching reward tier for a given energy percentage.
- * Tiers are evaluated in order; first match wins.
+ * Share of the target reward earned for a given energy percentage.
+ *
+ * DECISION (2026-10-02): the reward follows the energy point by point —
+ * 83.5% of energy pays 83.5% — between a floor and 100%. It used to be a
+ * five-step ladder (90+ → 100%, 70–89 → 80%, …). On a ladder one energy point
+ * is worth 20% of the allowance at the edge and nothing in the middle of a
+ * band: Ricardo's three daughters ended September with 89.5 / 83.5 / 66 and
+ * were paid 100% / 80% / 60% — and the first one's 89.5 even DISPLAYED as 90,
+ * because the tier was picked from the rounded number. Do not bring cliffs
+ * back; the tests pin that two close energies pay close rewards.
+ *
+ * Escalada can push energy above 100; the reward is capped at 100%.
  */
-export function findRewardTier(
+export function rewardPercentFor(
   energyPercent: number,
-  tiers: readonly RewardTier[] = DEFAULT_REWARD_TIERS
-): RewardTier {
-  for (const tier of tiers) {
-    if (energyPercent >= tier.minEnergyPercent && energyPercent <= tier.maxEnergyPercent) {
-      return tier;
-    }
-  }
-  // Fallback: return the lowest tier
-  return tiers[tiers.length - 1]!;
+  minRewardPercent: number = MIN_REWARD_PERCENT
+): number {
+  return Math.min(100, Math.max(minRewardPercent, energyPercent));
 }
 
 /**
@@ -70,13 +76,12 @@ export function calculateReward(
     throw new Error(`calculateReward: initialEnergy must be > 0, got ${initialEnergy}`);
   }
 
-  const energyPercent = Math.round((finalEnergy / initialEnergy) * 100);
-  const tier = findRewardTier(energyPercent, config.tiers);
+  // Not rounded to a whole number first: 89.5 must not turn into 90.
+  const energyPercent = (finalEnergy / initialEnergy) * 100;
+  const rewardPercent = rewardPercentFor(energyPercent, config.minRewardPercent);
 
-  // Base reward from tier
-  const baseReward = Math.round((targetReward * tier.rewardPercent) / 100 * 100) / 100;
+  const baseReward = Math.round((targetReward * rewardPercent) / 100 * 100) / 100;
 
-  // Cooperation bonus
   const cooperationBonus = calculateCooperationBonus(
     cooperationScore,
     targetReward,
@@ -86,8 +91,8 @@ export function calculateReward(
   const totalReward = Math.round((baseReward + cooperationBonus) * 100) / 100;
 
   return {
-    energyPercent,
-    tier,
+    energyPercent: round1(energyPercent),
+    rewardPercent: round1(rewardPercent),
     baseReward,
     cooperationBonus,
     totalReward,

@@ -36,6 +36,17 @@ interface Summary {
       finalRecorded: number | null;
     } | null;
   }[];
+  previous: {
+    mission: { id: string; name: string; start_at: string; end_at: string };
+    guardians: {
+      guardian: { id: string; name: string };
+      percentage: number;
+      qualitative: GuardianEnergy['qualitative'] | null;
+      counts: GuardianEnergy['counts'] | null;
+      completionRate: number | null;
+      reward: { target: number; final: number | null } | null;
+    }[];
+  } | null;
   canSeeMoney?: boolean;
 }
 
@@ -143,11 +154,57 @@ export default function EnergyPage() {
                   {reward.cooperationBonus > 0 ? ` + ${formatCurrency(reward.cooperationBonus)} de cooperação` : ''}
                   {' · '}os guardiões nunca veem este valor
                 </p>
+                <Breakdown
+                  className="mt-2 border-t border-indigo-100 pt-2 text-indigo-800"
+                  counts={energy.counts}
+                  completionRate={energy.completionRate}
+                  streakDays={energy.streakDays}
+                />
               </div>
               )}
             </Card>
           ))}
         </div>
+      )}
+
+      {data?.previous && data.previous.guardians.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>🕘 Período anterior</CardTitle>
+            <CardDescription>
+              {data.previous.mission.name} · {formatDate(data.previous.mission.start_at)} a {formatDate(data.previous.mission.end_at)}.
+              Foi com estes números que a mesada daquele período foi fechada.
+            </CardDescription>
+          </CardHeader>
+          <div className="grid gap-3 md:grid-cols-2">
+            {data.previous.guardians.map((p) => (
+              <div key={p.guardian.id} className="rounded-lg bg-gray-50 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="truncate text-sm font-semibold text-gray-900">🦸 {p.guardian.name}</h3>
+                  <span className={`shrink-0 text-xs font-bold ${p.qualitative?.color ?? 'text-gray-700'}`}>
+                    {p.qualitative?.emoji} {p.percentage}% de energia
+                  </span>
+                </div>
+                {p.reward && (
+                  <p className="mt-1 text-xs text-gray-700">
+                    Mesada:{' '}
+                    <strong className="text-gray-900">
+                      {p.reward.final != null ? formatCurrency(p.reward.final) : '—'}
+                    </strong>
+                    {' '}de {formatCurrency(p.reward.target)}
+                  </p>
+                )}
+                {p.counts && (
+                  <Breakdown
+                    className="mt-2 border-t border-gray-200 pt-2 text-gray-600"
+                    counts={p.counts}
+                    completionRate={p.completionRate}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
       )}
 
       <Card>
@@ -163,9 +220,40 @@ export default function EnergyPage() {
           <Rule icon="🏆" text={`Cada missão extra devolve energia (${'+2'} por padrão, ajustável em Configurações), até compensar as faltas.`} />
           <Rule icon="⬆️" text="Escaladas (gentilezas, estudo, ir além) somam energia extra e podem passar de 100." />
           <Rule icon="🤝" text="Cooperação é outra medida: ajudar os outros não muda a energia, mas dá bônus na mesada." />
-          <Rule icon="💰" text="Mesada: 90%+ de energia vale 100% do valor-alvo; 70–89% vale 80%; 50–69% vale 60%; 30–49% vale 40%; abaixo, 20%." />
+          <Rule icon="💰" text="Mesada: acompanha a energia ponto a ponto. 85 de energia paga 85% do valor-alvo; 100 ou mais paga o valor cheio; o mínimo é 20%." />
         </div>
       </Card>
+    </div>
+  );
+}
+
+/** O descritivo do período: o que foi feito, o que faltou e como isso pesou. */
+function Breakdown({
+  counts,
+  completionRate,
+  streakDays,
+  className,
+}: {
+  counts: GuardianEnergy['counts'];
+  completionRate: number | null;
+  streakDays?: number;
+  className?: string;
+}) {
+  const expectedDone = Math.max(0, counts.done - counts.recoveries);
+  const resolved = expectedDone + counts.missed;
+  return (
+    <div className={`space-y-0.5 text-[11px] ${className ?? ''}`}>
+      {completionRate != null && (
+        <p>
+          <strong>{expectedDone} de {resolved}</strong> ações cumpridas ({completionRate}%)
+        </p>
+      )}
+      <p>
+        {counts.missed} {counts.missed === 1 ? 'falta' : 'faltas'}
+        {counts.recoveries > 0 && ` · ${counts.recoveries} ${counts.recoveries === 1 ? 'compensação' : 'compensações'} (devolvem energia)`}
+        {counts.escaladaPoints > 0 && ` · +${counts.escaladaPoints} de escalada`}
+        {streakDays != null && ` · ${streakDays} ${streakDays === 1 ? 'dia' : 'dias'} sem falta`}
+      </p>
     </div>
   );
 }

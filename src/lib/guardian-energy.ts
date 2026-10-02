@@ -48,6 +48,13 @@ export interface GuardianEnergy {
   windowDays: number;
   /** Contagens dentro da janela, para transparência. `pending` é da missão toda. */
   counts: { done: number; missed: number; pending: number; recoveries: number; escaladaPoints: number };
+  /**
+   * Das ações que já tinham de estar resolvidas na janela, quantas foram feitas
+   * (0–100), sem contar compensações — extras não eram esperadas. `null` se
+   * ainda não houve nenhuma. É o retrato direto de "o que cada um fez", ao lado
+   * da energia, que também pesa sequências e compensações.
+   */
+  completionRate: number | null;
 }
 
 /**
@@ -210,6 +217,10 @@ export async function getGuardianEnergy(
     sequences.push(...buildSequences(unique, guardianId, missionId, actionTemplateId));
   }
 
+  const expectedDone = Math.max(0, doneCount - recoveryCount);
+  const resolved = expectedDone + missedInWindow;
+  const completionRate = resolved > 0 ? Math.round((expectedDone / resolved) * 100) : null;
+
   const result = computeEnergy(sequences, recoveryCount, escaladaPoints, {
     initialEnergy,
     recurrenceWeight: RECURRENCE_WEIGHT,
@@ -236,5 +247,6 @@ export async function getGuardianEnergy(
       recoveries: recoveryCount,
       escaladaPoints,
     },
+    completionRate,
   };
 }

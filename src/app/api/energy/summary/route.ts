@@ -11,6 +11,7 @@ import { requireAdult, apiError } from '@/lib/require-mor';
 import { isChild } from '@/lib/roles';
 import { getGuardianEnergy } from '@/lib/guardian-energy';
 import { calculateReward } from '@/domain/reward/calculator';
+import { getEnergyPercentage } from '@/domain/energy/engine';
 
 export const dynamic = 'force-dynamic';
 
@@ -74,7 +75,7 @@ export async function GET() {
         reward: canSeeMoney
           ? {
               target,
-              tierPercent: reward.tier.rewardPercent,
+              tierPercent: reward.rewardPercent,
               base: reward.baseReward,
               cooperationBonus: reward.cooperationBonus,
               total: reward.totalReward,
@@ -87,5 +88,63 @@ export async function GET() {
     }
   }
 
-  return NextResponse.json({ data: { mission, guardians: results, canSeeMoney } });
+  // O período anterior: a última missão encerrada antes desta. Fica na tela
+  // para quem recebeu a mesada entender de onde veio o valor — os números
+  // gravados no fechamento são os que valeram, o descritivo (feitas, faltas…)
+  // é recontado até o último dia daquele período.
+  const { data: prevMission } = await db
+    .from('missions')
+    .select('id, name, start_at, end_at, target_reward_amount')
+    .eq('family_id', me.family_id)
+    .eq('status', 'completed')
+    .neq('id', mission.id)
+    .lt('start_at', mission.start_at)
+    .order('start_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  let previous: unknown = null;
+  if (prevMission) {
+    const { data: prevRows } = await db
+      .from('mission_guardians')
+      .select('guardian_id, initial_energy, final_energy, final_reward, target_reward')
+      .eq('mission_id', prevMission.id);
+    const prevByGuardian = new Map((prevRows ?? []).map((r) => [r.guardian_id, r]));
+
+    const prevGuardians = [];
+    for (const g of guardians) {
+      const row = prevByGuardian.get(g.id);
+      if (!row || row.final_energy == null) continue;
+      const initial = Number(row.initial_energy) || 100;
+      let details = null;
+      try {
+        details = await getGuardianEnergy(
+          db,
+          g.id,
+          prevMission.id,
+          me.family_id,
+          new Date(`${prevMission.start_at}T12:00:00Z`),
+          new Date(`${prevMission.end_at}T12:00:00Z`)
+        );
+      } catch {
+        // Sem o descritivo o cartão ainda mostra energia e mesada gravadas.
+      }
+      prevGuardians.push({
+        guardian: { id: g.id, name: g.name },
+        percentage: getEnergyPercentage(Number(row.final_energy), initial),
+        qualitative: details?.qualitative ?? null,
+        counts: details?.counts ?? null,
+        completionRate: details?.completionRate ?? null,
+        reward: canSeeMoney
+          ? {
+              target: Number(row.target_reward ?? prevMission.target_reward_amount ?? 0),
+              final: row.final_reward == null ? null : Number(row.final_reward),
+            }
+          : null,
+      });
+    }
+    previous = { mission: prevMission, guardians: prevGuardians };
+  }
+
+  return NextResponse.json({ data: { mission, guardians: results, previous, canSeeMoney } });
 }

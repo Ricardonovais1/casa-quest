@@ -217,7 +217,9 @@ export function getQualitativeState(
   finalEnergy: number,
   initialEnergy: number
 ): QualitativeStateInfo {
-  const percentage = (finalEnergy / initialEnergy) * 100;
+  // Rounded, like the percentage shown next to it: 89.5 displays as 90, so it
+  // must not be labelled as if it were 89.
+  const percentage = Math.round((finalEnergy / initialEnergy) * 100);
 
   if (percentage > 100) {
     return {

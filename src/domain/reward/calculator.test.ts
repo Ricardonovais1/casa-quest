@@ -2,57 +2,27 @@
 // Casa Quest — Domain: Reward Calculator Tests
 // ============================================================
 
-import { calculateReward, findRewardTier, calculateCooperationBonus } from './calculator';
+import { calculateReward, rewardPercentFor, calculateCooperationBonus } from './calculator';
 
-describe('findRewardTier', () => {
-  it('90% → 100% reward tier', () => {
-    const tier = findRewardTier(90);
-    expect(tier.rewardPercent).toBe(100);
+describe('rewardPercentFor', () => {
+  it('follows the energy point by point', () => {
+    expect(rewardPercentFor(83.5)).toBe(83.5);
+    expect(rewardPercentFor(66)).toBe(66);
   });
 
-  it('95% → 100% reward tier', () => {
-    const tier = findRewardTier(95);
-    expect(tier.rewardPercent).toBe(100);
+  it('has no cliffs: close energies pay close rewards', () => {
+    // The old ladder paid 100% at 90 and 80% at 89 — a 20-point drop for one point.
+    expect(Math.abs(rewardPercentFor(90) - rewardPercentFor(89))).toBeLessThanOrEqual(1);
+    expect(Math.abs(rewardPercentFor(70) - rewardPercentFor(69))).toBeLessThanOrEqual(1);
   });
 
-  it('80% → 80% reward tier', () => {
-    const tier = findRewardTier(80);
-    expect(tier.rewardPercent).toBe(80);
+  it('caps at 100% even with escalada energy', () => {
+    expect(rewardPercentFor(105)).toBe(100);
   });
 
-  it('70% → 80% reward tier (boundary)', () => {
-    const tier = findRewardTier(70);
-    expect(tier.rewardPercent).toBe(80);
-  });
-
-  it('60% → 60% reward tier', () => {
-    const tier = findRewardTier(60);
-    expect(tier.rewardPercent).toBe(60);
-  });
-
-  it('40% → 40% reward tier', () => {
-    const tier = findRewardTier(40);
-    expect(tier.rewardPercent).toBe(40);
-  });
-
-  it('20% → 20% reward tier', () => {
-    const tier = findRewardTier(20);
-    expect(tier.rewardPercent).toBe(20);
-  });
-
-  it('5% → 20% reward tier (lowest)', () => {
-    const tier = findRewardTier(5);
-    expect(tier.rewardPercent).toBe(20);
-  });
-
-  it('0% → 20% reward tier', () => {
-    const tier = findRewardTier(0);
-    expect(tier.rewardPercent).toBe(20);
-  });
-
-  it('negative → 20% reward tier', () => {
-    const tier = findRewardTier(-10);
-    expect(tier.rewardPercent).toBe(20);
+  it('never goes below the floor', () => {
+    expect(rewardPercentFor(5)).toBe(20);
+    expect(rewardPercentFor(-72)).toBe(20);
   });
 });
 
@@ -86,35 +56,35 @@ describe('calculateReward', () => {
     expect(result.totalReward).toBe(50);
   });
 
-  it('80 energy, R$50 target → 80% tier → R$40 base', () => {
+  it('80 energy, R$50 target → 80% → R$40 base', () => {
     const result = calculateReward(80, 100, 50, 0);
     expect(result.energyPercent).toBe(80);
-    expect(result.tier.rewardPercent).toBe(80);
+    expect(result.rewardPercent).toBe(80);
     expect(result.baseReward).toBe(40);
   });
 
-  it('60 energy, R$100 target → 60% tier → R$60 base', () => {
+  it('60 energy, R$100 target → 60% → R$60 base', () => {
     const result = calculateReward(60, 100, 100, 0);
     expect(result.baseReward).toBe(60);
   });
 
-  it('25 energy, R$50 target → 20% tier → R$10 base', () => {
-    const result = calculateReward(25, 100, 50, 0);
-    expect(result.tier.rewardPercent).toBe(20);
+  it('10 energy, R$50 target → floor of 20% → R$10 base', () => {
+    const result = calculateReward(10, 100, 50, 0);
+    expect(result.rewardPercent).toBe(20);
     expect(result.baseReward).toBe(10);
   });
 
-  it('95 energy + 20 coop → 100% reward + 4% bonus = R$52 on R$50', () => {
+  it('95 energy + 20 coop → 95% reward + 4% bonus = R$49.50 on R$50', () => {
     const result = calculateReward(95, 100, 50, 20);
-    expect(result.baseReward).toBe(50);
+    expect(result.baseReward).toBe(47.5);
     expect(result.cooperationBonus).toBe(2); // 20/10 * 2% * 50 = 2
-    expect(result.totalReward).toBe(52);
+    expect(result.totalReward).toBe(49.5);
   });
 
-  it('105 energy (escalada) → 100% reward tier', () => {
+  it('105 energy (escalada) → capped at 100% reward', () => {
     const result = calculateReward(105, 100, 50, 0);
     expect(result.energyPercent).toBe(105);
-    expect(result.tier.rewardPercent).toBe(100);
+    expect(result.rewardPercent).toBe(100);
     expect(result.baseReward).toBe(50);
   });
 
@@ -126,17 +96,14 @@ describe('calculateReward', () => {
     expect(() => calculateReward(50, -10, 50, 0)).toThrow('initialEnergy must be > 0');
   });
 
-  it('custom tiers are respected', () => {
-    const customTiers = [
-      { minEnergyPercent: 80, maxEnergyPercent: Infinity, rewardPercent: 100 },
-      { minEnergyPercent: 50, maxEnergyPercent: 79, rewardPercent: 75 },
-      { minEnergyPercent: 0, maxEnergyPercent: 49, rewardPercent: 50 },
-    ];
-    const result = calculateReward(70, 100, 100, 0, {
-      tiers: customTiers,
-      cooperationBonusPercent: 2,
-    });
-    expect(result.tier.rewardPercent).toBe(75);
-    expect(result.baseReward).toBe(75);
+  it('89.5 energy is not rounded up to 90 (September 2026 regression)', () => {
+    const result = calculateReward(89.5, 100, 80, 0);
+    expect(result.energyPercent).toBe(89.5);
+    expect(result.baseReward).toBe(71.6);
+  });
+
+  it('a custom floor is respected', () => {
+    const result = calculateReward(10, 100, 100, 0, { minRewardPercent: 50, cooperationBonusPercent: 2 });
+    expect(result.baseReward).toBe(50);
   });
 });

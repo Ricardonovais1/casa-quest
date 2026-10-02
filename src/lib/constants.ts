@@ -78,15 +78,6 @@ export const DEFAULT_ESCALADA_CATEGORIES = [
   { name: 'Rendimento Escolar', basePoints: 3, bonusMultiplier: 1.0, maxPerMission: 15 },
 ] as const;
 
-/** Reward tiers (default) */
-export const DEFAULT_REWARD_TIERS = [
-  { min: 90, max: 100, label: '100%', rewardPercent: 100 },
-  { min: 70, max: 89, label: '80%', rewardPercent: 80 },
-  { min: 50, max: 69, label: '60%', rewardPercent: 60 },
-  { min: 30, max: 49, label: '40%', rewardPercent: 40 },
-  { min: 0, max: 29, label: '20%', rewardPercent: 20 },
-] as const;
-
 /** Color scheme for action types */
 export const ACTION_TYPE_COLORS = {
   basic: { border: 'border-blue-400', bg: 'bg-blue-50', text: 'text-blue-700' },

@@ -282,7 +282,7 @@ export default function MissionsPage() {
                 inputMode="decimal"
               />
               <p className="mt-1 text-[11px] text-gray-400">
-                Valor cheio para 90%+ de energia. Depois de criar, dá para ajustar por guardião em &quot;Editar&quot;. Os guardiões nunca veem este valor.
+                A mesada acompanha a energia: 100% de energia paga o valor cheio. Depois de criar, dá para ajustar por guardião em &quot;Editar&quot;. Os guardiões nunca veem este valor.
               </p>
             </div>
             {startDate && (
