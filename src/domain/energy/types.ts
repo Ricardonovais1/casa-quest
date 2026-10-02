@@ -57,6 +57,12 @@ export interface EnergyConfig {
   initialEnergy: number;          // default 100
   recurrenceWeight: number;       // default 0.5 — weight applied to recurrence penalty
   recoveryValue: number;          // default 2 — energy restored per recovery action
+  /**
+   * Most the extras may offset, as % of the energy lost to absences.
+   * 100 (default) = only up to what was lost; 50 = at most half;
+   * above 100 (Infinity = no limit) = extras may push energy past the start.
+   */
+  recoveryLimitPercent?: number;
 }
 
 /** Result of a full energy computation */

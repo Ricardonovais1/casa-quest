@@ -94,6 +94,7 @@ function SettingsForm({
   // as duas colunas do banco andam juntas.
   const [extrasOn, setExtrasOn] = useState(extrasEnabled(family));
   const [recoveryValue, setRecoveryValue] = useState(family.recovery_value);
+  const [recoveryLimit, setRecoveryLimit] = useState(family.recovery_limit_percent ?? 100);
   const [auxilioEnabled, setAuxilioEnabled] = useState(family.auxilio_enabled);
   const [alertsEnabled, setAlertsEnabled] = useState(family.performance_alerts_enabled !== false);
   const [alertThreshold, setAlertThreshold] = useState(
@@ -121,6 +122,7 @@ function SettingsForm({
 
   // Migração 00009/00010 aplicada? (a coluna volta do select('*'))
   const schemaHasDayEnd = 'day_end_time' in family;
+  const schemaHasRecoveryLimit = 'recovery_limit_percent' in family;
   const schemaHasAlerts = 'performance_alerts_enabled' in family;
   const role = roleOf(me);
   const myLabels = role === 'mor' ? { f: 'Guardiã-Mor', m: 'Guardião-Mor' } : { f: 'Conselheira', m: 'Conselheiro' };
@@ -149,6 +151,8 @@ function SettingsForm({
     }
     // A coluna só existe depois da migração 00009.
     if (schemaHasDayEnd) payload.day_end_time = dayEnd;
+    // O limite da compensação, depois da 00011.
+    if (schemaHasRecoveryLimit) payload.recovery_limit_percent = recoveryLimit;
     // As de alerta, depois da 00010.
     if (schemaHasAlerts) {
       payload.performance_alerts_enabled = alertsEnabled;
@@ -400,6 +404,31 @@ function SettingsForm({
                 </div>
               )}
             </div>
+            {extrasOn && schemaHasRecoveryLimit && (
+              <div className="mt-4 border-t border-gray-100 pt-3">
+                <p className="text-sm text-gray-500">Quanto das faltas as extras podem compensar:</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {[
+                    { v: 25, label: '25%' },
+                    { v: 50, label: 'Metade' },
+                    { v: 75, label: '75%' },
+                    { v: 100, label: 'Tudo' },
+                    { v: 1000, label: 'Sem limite' },
+                  ].map((o) => (
+                    <button key={o.v} onClick={() => setRecoveryLimit(o.v)} className={chip(recoveryLimit === o.v, 'bg-orange-500')}>
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-gray-400">
+                  {recoveryLimit >= 1000
+                    ? 'Sem limite: as extras podem passar de 100 de energia, mesmo sem faltas para compensar.'
+                    : recoveryLimit === 100
+                      ? 'Tudo: as extras compensam as faltas até zerá-las, nunca além.'
+                      : `As extras devolvem no máximo ${recoveryLimit}% da energia perdida com faltas; o resto só se resolve cumprindo o combinado.`}
+                </p>
+              </div>
+            )}
           </Card>
 
           {/* Auxilio */}

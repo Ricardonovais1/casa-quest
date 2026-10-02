@@ -177,12 +177,20 @@ export function computeEnergy(
 
   // 4. Recovery: each recovery action restores config.recoveryValue energy
   //    Limited to 1 recovery per absence (not per sequence)
+  //    The family may allow only part of the loss to be offset (< 100%), or
+  //    let extras go beyond it (> 100%): then the one-per-absence limit goes
+  //    too, and energy can end above the start.
+  const limitPercent = config.recoveryLimitPercent ?? 100;
   const totalAbsences = allSequences.reduce((sum, seq) => sum + seq.length, 0);
-  const effectiveRecoveries = Math.min(recoveries, totalAbsences);
+  const effectiveRecoveries = limitPercent > 100 ? recoveries : Math.min(recoveries, totalAbsences);
   const totalRecovery = effectiveRecoveries * config.recoveryValue;
 
-  // 5. Net loss: cannot be negative (recovery can't overshoot the loss)
-  const netLoss = Math.max(0, totalLoss - totalRecovery);
+  // 5. Net loss: recovery is limited to limitPercent of the loss. At 100% or
+  //    less it can never overshoot the loss (net loss >= 0); above, it can.
+  const allowedRecovery = Number.isFinite(limitPercent)
+    ? (totalLoss * limitPercent) / 100
+    : Infinity;
+  const netLoss = totalLoss - Math.min(totalRecovery, allowedRecovery);
 
   // 6. Final energy: start from initial, subtract net loss, add escalada
   //    Escalada CAN push energy above the initial value (100+)

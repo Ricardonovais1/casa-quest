@@ -391,6 +391,48 @@ describe('computeEnergy', () => {
   });
 });
 
+describe('computeEnergy — recovery limit', () => {
+  // 3 isolated absences in 3 templates: loss = 3 + 3×0.5 = 4.5
+  const three = [
+    makeSequence([date(2026, 1, 1)], 'g1', 'm1', 't1'),
+    makeSequence([date(2026, 1, 3)], 'g1', 'm1', 't2'),
+    makeSequence([date(2026, 1, 5)], 'g1', 'm1', 't3'),
+  ];
+
+  it('default (100%) offsets at most the whole loss', () => {
+    const r = computeEnergy(three, 3, 0, { ...defaultConfig, recoveryValue: 5 });
+    expect(r.netLoss).toBe(0);
+    expect(r.finalEnergy).toBe(100);
+  });
+
+  it('50% lets extras offset only half of the loss', () => {
+    const r = computeEnergy(three, 3, 0, { ...defaultConfig, recoveryValue: 5, recoveryLimitPercent: 50 });
+    expect(r.netLoss).toBe(2.25);
+    expect(r.finalEnergy).toBe(97.75);
+  });
+
+  it('0% means extras do not compensate at all', () => {
+    const r = computeEnergy(three, 3, 0, { ...defaultConfig, recoveryLimitPercent: 0 });
+    expect(r.finalEnergy).toBe(95.5);
+  });
+
+  it('no limit lets extras push energy past the start', () => {
+    const r = computeEnergy(three, 3, 0, { ...defaultConfig, recoveryLimitPercent: Infinity });
+    expect(r.netLoss).toBe(-1.5); // 4.5 loss, 6 recovered
+    expect(r.finalEnergy).toBe(101.5);
+  });
+
+  it('no limit also counts extras with no absence to compensate', () => {
+    const r = computeEnergy([], 2, 0, { ...defaultConfig, recoveryLimitPercent: Infinity });
+    expect(r.finalEnergy).toBe(104);
+  });
+
+  it('with the default limit, extras without absences change nothing', () => {
+    const r = computeEnergy([], 2, 0, defaultConfig);
+    expect(r.finalEnergy).toBe(100);
+  });
+});
+
 // ============================================================================
 // getQualitativeState
 // ============================================================================

@@ -217,7 +217,7 @@ export default function EnergyPage() {
         <div className="grid gap-2 text-xs text-gray-600 sm:grid-cols-2">
           <Rule icon="✕" text="Uma falta isolada tira 1. Faltas em dias seguidos na mesma ação pesam mais: 2 dias tiram 3, 3 dias tiram 7." />
           <Rule icon="🔁" text="Faltar em várias ações diferentes (tropeços incluídos) soma uma penalidade extra de reincidência." />
-          <Rule icon="🏆" text={`Cada missão extra devolve energia (${'+2'} por padrão, ajustável em Configurações), até compensar as faltas.`} />
+          <Rule icon="🏆" text="Cada missão extra devolve energia (+2 por padrão). Em Configurações, a casa escolhe se elas compensam todas as faltas, só parte delas, ou podem até passar de 100." />
           <Rule icon="⬆️" text="Escaladas (gentilezas, estudo, ir além) somam energia extra e podem passar de 100." />
           <Rule icon="🤝" text="Cooperação é outra medida: ajudar os outros não muda a energia, mas dá bônus na mesada." />
           <Rule icon="💰" text="Mesada: acompanha a energia ponto a ponto. 85 de energia paga 85% do valor-alvo; 100 ou mais paga o valor cheio; o mínimo é 20%." />

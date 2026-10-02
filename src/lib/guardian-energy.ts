@@ -34,6 +34,14 @@ const RECURRENCE_WEIGHT = 0.5;
  */
 export const ENERGY_WINDOW_DAYS = 30;
 
+/** `recovery_limit_percent` do banco (1000 = sem limite), como o motor o entende. */
+export const RECOVERY_UNLIMITED = 1000;
+export function recoveryLimitOf(value: unknown): number {
+  const n = Number(value);
+  if (value == null || !Number.isFinite(n) || n < 0) return 100;
+  return n >= RECOVERY_UNLIMITED ? Infinity : n;
+}
+
 export interface GuardianEnergy {
   percentage: number;
   finalEnergy: number;
@@ -163,7 +171,7 @@ export async function getGuardianEnergy(
       .in('status', ['pending', 'marked_done']),
     supabase
       .from('families')
-      .select('recovery_value, timezone')
+      .select('*') // recovery_limit_percent só existe depois da migração 00011
       .eq('id', familyId)
       .maybeSingle(),
   ]);
@@ -225,6 +233,7 @@ export async function getGuardianEnergy(
     initialEnergy,
     recurrenceWeight: RECURRENCE_WEIGHT,
     recoveryValue: familyConfig?.recovery_value || 2,
+    recoveryLimitPercent: recoveryLimitOf(familyConfig?.recovery_limit_percent),
   });
 
   return {

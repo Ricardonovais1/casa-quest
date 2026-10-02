@@ -462,7 +462,7 @@ export default function FamilyPage() {
           <Row label="Rodízio da distribuição" value={family.rotation_interval_months === 1 ? '1 mês' : `${family.rotation_interval_months} meses`} />
           <Row
             label="Missões extras"
-            value={extrasEnabled(family) ? `Ativas (+${family.recovery_value} energia ao compensar)` : 'Inativas'}
+            value={extrasEnabled(family) ? `Ativas (+${family.recovery_value} energia ao compensar${recoveryLimitLabel(family.recovery_limit_percent)})` : 'Inativas'}
           />
           <Row label="Auxílio" value={family.auxilio_enabled ? 'Ativo' : 'Inativo'} />
           <Row
@@ -647,6 +647,12 @@ function GuardianCard({
       )}
     </Card>
   );
+}
+
+function recoveryLimitLabel(limit: number | undefined): string {
+  if (limit == null || limit === 100) return '';
+  if (limit >= 1000) return ', sem limite';
+  return `, até ${limit}% das faltas`;
 }
 
 function Row({ label, value }: { label: string; value: string }) {

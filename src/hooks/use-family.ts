@@ -40,6 +40,8 @@ export interface FamilyData {
   rotation_interval_months: number;
   /** Migração 00009. Hora em que o dia fecha; 22:00 antes dela. */
   day_end_time?: string | null;
+  /** Migração 00011. Até quanto das faltas as extras compensam (%); 1000 = sem limite. */
+  recovery_limit_percent?: number;
   /** Migration 00008 */
   equal_powers?: boolean;
   advisors_see_reward?: boolean;
